@@ -49,8 +49,8 @@ int main(int argc, char* args[]) {
 
     SDL_Renderer* renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
-    SDL_Rect player = { 100, 100, 32, 32 };
-    SDL_Rect enemy = { 400, 300, 32, 32 };
+    SDL_Rect player = {100, 100, 32, 32};
+    SDL_Rect enemy = {400, 300, 32, 32};
 
     float enemyAngle = 0.0f;
     float fov = 60.0f * M_PI / 180.0f;
@@ -73,8 +73,8 @@ int main(int argc, char* args[]) {
         // Àû È¸Àü (ÀÚµ¿ ¼øÂû ´À³¦)
         enemyAngle += 0.01f;
 
-        float dx = (player.x + player.w / 2) - (enemy.x + enemy.w / 2);
-        float dy = (player.y + player.h / 2) - (enemy.y + enemy.h / 2);
+        float dx = (player.x + player.w/2) - (enemy.x + enemy.w/2);
+        float dy = (player.y + player.h/2) - (enemy.y + enemy.h/2);
 
         float distSq = dx * dx + dy * dy;
 
