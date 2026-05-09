@@ -22,6 +22,42 @@ enum GameState
 };
 
 // =====================================================
+// 플레이어 이동 상태
+// =====================================================
+enum MoveMode
+{
+    SNEAK,
+    WALK,
+    RUN
+};
+
+float GetMoveSpeed(MoveMode mode)
+{
+    switch (mode)
+    {
+    case SNEAK: return 90.0f;
+    case WALK: return 180.0f;
+    case RUN: return 300.0f;
+    default: return 180.0f;
+    }
+}
+
+MoveMode GetMoveMode(const Uint8* keystate)
+{
+    if (keystate[SDL_SCANCODE_LCTRL] || keystate[SDL_SCANCODE_RCTRL])
+    {
+        return SNEAK;
+    }
+
+    if (keystate[SDL_SCANCODE_LSHIFT] || keystate[SDL_SCANCODE_RSHIFT])
+    {
+        return RUN;
+    }
+
+    return WALK
+}
+
+// =====================================================
 // 적 구조체
 // =====================================================
 
@@ -143,33 +179,39 @@ void DrawFOV(SDL_Renderer* renderer,
 // =====================================================
 
 void MovePlayer(SDL_Rect& player,
-    int dx,
-    int dy,
+    float dx,
+    float dy,
     std::vector<SDL_Rect>& walls)
 {
     SDL_Rect next = player;
 
-    next.x += dx;
+    next.x += (int)dx;
 
     for (auto& w : walls)
     {
         if (SDL_HasIntersection(&next, &w))
-            dx = 0;
+        {
+            dx = 0.0f;
+            break;
+        }
     }
 
-    player.x += dx;
+    player.x += (int)dx;
 
     next = player;
 
-    next.y += dy;
+    next.y += (int)dy;
 
     for (auto& w : walls)
     {
         if (SDL_HasIntersection(&next, &w))
-            dy = 0;
+        {
+            dy = 0.0f;
+            break;
+        }
     }
 
-    player.y += dy;
+    player.y += (int)dy;
 }
 
 // =====================================================
@@ -272,6 +314,8 @@ int main(int argc, char* args[])
     GameState gameState = PLAYING;
 
     Uint32 stateTimer = 0;
+    Uint64 previousCounter = SDL_GetPerformanceCounter();
+    Uint64 performanceFrequency = SDL_GetPerformanceFrequency();
 
     // =================================================
     // 루프
@@ -279,6 +323,15 @@ int main(int argc, char* args[])
 
     while (running)
     {
+        Uint64 currentCounter = SDL_GetPerformanceCounter();
+
+        float dt = (float)(currentCounter - previousCounter) / (float)performanceFrequency;
+
+        previousCounter = currentCounter;
+
+        if (dt > 0.05f)
+            dt = 0.05f;
+        
         SDL_Event e;
 
         while (SDL_PollEvent(&e))
@@ -296,15 +349,43 @@ int main(int argc, char* args[])
             const Uint8* keystate =
                 SDL_GetKeyboardState(NULL);
 
-            int dx = 0;
-            int dy = 0;
+            MoveMode moveMode = GetMoveMode(keystate);
+            float moveSpeed = GetMoveSpeed(moveMode);
 
-            if (keystate[SDL_SCANCODE_W]) dy -= 3;
-            if (keystate[SDL_SCANCODE_S]) dy += 3;
-            if (keystate[SDL_SCANCODE_A]) dx -= 3;
-            if (keystate[SDL_SCANCODE_D]) dx += 3;
+            float dirX = 0.0f;
+            float dirY = 0.0f;
+
+            if (keystate[SDL_SCANCODE_W]) dirY -= 1.0f;
+            if (keystate[SDL_SCANCODE_S]) dirY += 1.0f;
+            if (keystate[SDL_SCANCODE_A]) dirX -= 1.0f;
+            if (keystate[SDL_SCANCODE_D]) dirX += 1.0f;
+
+            float length = sqrt(dirX * dirX + dirY * dirY);
+
+            if (length > 0.0f)
+            {
+                dirX /= length;
+                dirY /= length;
+            }
+
+            float dx = dirX * moveSpeed * dt;
+            float dy = dirY * moveSpeed * dt;
 
             MovePlayer(player, dx, dy, walls);
+
+            // =========================================
+            // 소음
+            // =========================================
+
+            if (moveMode == RUN)
+            {
+                // 달리는 중 소음 발생 가능
+            }
+
+            if (moveMode == SNEAK)
+            {
+                // 소음 없음
+            }
 
             // =========================================
             // 목표 도착
