@@ -54,7 +54,7 @@ MoveMode GetMoveMode(const Uint8* keystate)
         return RUN;
     }
 
-    return WALK
+    return WALK;
 }
 
 // =====================================================
