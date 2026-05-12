@@ -499,6 +499,7 @@ static void UpdateAlert(
     FacePoint(enemy, playerCenter);
     // 나중에 경보 시스템을 만들면 여기서 바로 패배시키지 않고 alarmActive 같은 전역 경보 플래그로 바꾸기
     playerDetected = true;
+}
 
 // =====================================================
 // 적 업데이트
