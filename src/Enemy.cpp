@@ -3,6 +3,131 @@
 #include <algorithm>
 #include <cmath>
 
+namespace
+{
+    constexpr float PI =
+        3.14159265358979323846f;
+    constexpr float DEG_TO_RAD =
+        PI / 180.0f;
+    constexpr int DEFAULT_ENEMY_WIDTH = 32;
+    constexpr int DEFAULT_ENEMY_HEIGHT = 32;
+
+    SDL_Rect MakeEnemyRectFromCenter(Vec2 center)
+    {
+        SDL_Rect rect;
+        rect.x = (int)std::round(center.x - DEFAULT_ENEMY_WIDTH * 0.5f);
+        rect.y = (int)std::round(center.y - DEFAULT_ENEMY_HEIGHT * 0.5f);
+        rect.w = DEFAULT_ENEMY_WIDTH;
+        rect.h = DEFAULT_ENEMY_HEIGHT;
+        return rect;
+    }
+    float GetAngleToPoint(
+        Vec2 from,
+        Vec2 to,
+        float fallbackAngle)
+    {
+        float dx = to.x - from.x;
+        float dy = to.y - from.y;
+        float lenSq = dx * dx + dy * dy;
+
+        if (lenSq <= 0.0001f)
+            return fallbackAngle;
+        return atan2f(dy, dx);
+    }
+    void ResetEnemyRuntimeFields(Enemy& enemy)
+    {
+        enemy.state = EnemyState::Patrol;
+        enemy.pos = { 0.0f, 0.0f };
+        enemy.homePos = { 0.0f, 0.0f };
+        enemy.homeAngle = 0.0f;
+        enemy.initialized = false;
+        enemy.patrolIndex = 0;
+        enemy.investigateTarget = { 0.0f, 0.0f };
+        enemy.lastKnownPlayerPos = { 0.0f, 0.0f };
+        enemy.stateTimer = 0.0f;
+        enemy.searchTimer = 0.0f;
+        enemy.hearingEnergy = 0.0f;
+        enemy.lastNoisePos = { 0.0f, 0.0f };
+        enemy.alerted = false;
+    }
+    void ApplyPatrolGuardDefaults(Enemy& enemy)
+    {
+        enemy.kind = EnemyKind::PatrolGuard;
+        enemy.fov = 60.0f * DEG_TO_RAD;
+        enemy.viewDist = 220.0f;
+        enemy.rotateSpeed = 0.01f;
+        enemy.moveSpeed = 80.0f;
+        enemy.searchDuration = 2.0f;
+        enemy.hearingThreshold = 4.0f;
+    }
+    void ApplySentryDefaults(Enemy& enemy)
+    {
+        enemy.kind = EnemyKind::Sentry;
+        enemy.angle = 0.0f;
+        enemy.fov = 90.0f * DEG_TO_RAD;
+        enemy.viewDist = 250.0f;
+        enemy.rotateSpeed = 0.008f;
+        enemy.moveSpeed = 0.0f;
+        enemy.searchDuration = 2.0f;
+        enemy.hearingThreshold = 4.0f;
+    }
+    void ApplyOfficerDefaults(Enemy& enemy)
+    {
+        enemy.kind = EnemyKind::Officer;
+        enemy.angle = 0.0f;
+        enemy.fov = 75.0f * DEG_TO_RAD;
+        enemy.viewDist = 280.0f;
+        enemy.rotateSpeed = 0.012f;
+        enemy.moveSpeed = 90.0f;
+        enemy.searchDuration = 2.5f;
+        enemy.hearingThreshold = 2.5f;
+    }
+}
+
+void AddPatrolGuard(
+    std::vector<Enemy>& enemies,
+    Vec2 spawnCenter,
+    const std::vector<Vec2>& patrolPoints)
+{
+    Enemy enemy = {};
+    ResetEnemyRuntimeFields(enemy);
+    enemy.rect = MakeEnemyRectFromCenter(spawnCenter);
+    enemy.angle = 0.0f;
+    ApplyPatrolGuardDefaults(enemy);
+    enemy.patrolPoints = patrolPoints;
+    if (!enemy.patrolPoints.empty())
+    {
+        enemy.angle = GetAngleToPoint(
+            spawnCenter,
+            enemy.patrolPoints[0],
+            enemy.angle);
+    }
+    enemies.push_back(enemy);
+}
+
+void AddSentry(
+    std::vector<Enemy>& enemies,
+    Vec2 spawnCenter)
+{
+    Enemy enemy = {};
+    ResetEnemyRuntimeFields(enemy);
+    enemy.rect = MakeEnemyRectFromCenter(spawnCenter);
+    ApplySentryDefaults(enemy);
+    enemy.patrolPoints.clear();
+    enemies.push_back(enemy);
+}
+
+void AddOfficer(
+    std::vector<Enemy>& enemies,
+    Vec2 spawnCenter)
+{
+    Enemy enemy = {};
+    ResetEnemyRuntimeFields(enemy);
+    enemy.rect = MakeEnemyRectFromCenter(spawnCenter);
+    ApplyOfficerDefaults(enemy);
+    enemy.patrolPoints.clear();
+    enemies.push_back(enemy);
+}
 // =====================================================
 // 선분 교차
 // =====================================================
