@@ -95,3 +95,18 @@ void NotifyEnemyOfNoise(
     float energy);
 
 const char* GetEnemyStateName(EnemyState state);
+
+// 적 생성 함수
+
+void AddPatrolGuard(
+    std::vector<Enemy>& enemies,
+    Vec2 spawnCenter,
+    const std::vector<Vec2>& patrolPoints);
+
+void AddSentry(
+    std::vector<Enemy>& enemies,
+    Vec2 spawnCenter);
+
+void AddOfficer(
+    std::vector<Enemy>& enemies,
+    Vec2 spawnCenter);
