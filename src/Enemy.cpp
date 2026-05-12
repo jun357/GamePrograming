@@ -67,7 +67,7 @@ namespace
         enemy.fov = 90.0f * DEG_TO_RAD;
         enemy.viewDist = 250.0f;
         enemy.rotateSpeed = 0.008f;
-        enemy.moveSpeed = 0.0f;
+        enemy.moveSpeed = 70.0f;
         enemy.searchDuration = 2.0f;
         enemy.hearingThreshold = 4.0f;
     }
