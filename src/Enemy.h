@@ -23,7 +23,7 @@ enum class EnemyState
     Return,
     Alert,
     Dead
-];
+};
 
 struct Enemy
 {
