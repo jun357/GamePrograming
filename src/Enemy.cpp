@@ -547,6 +547,8 @@ void UpdateEnemies(
         case EnemyState::Alert:
             UpdateAlert(enemy, player, playerDetected);
             break;
+        case EnemyState::Dead:
+            break;
         }
         enemy.alerted = IsSuspiciousState(enemy.state) || enemy.hearingEnergy >= enemy.hearingThreshold;
     }
