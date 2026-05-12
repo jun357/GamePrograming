@@ -45,7 +45,8 @@ void ResetStage(
         {
             {650.0f, 316.0f},
             {650.0f, 450.0f},
-            {516.0f, 450.0f}
+            {516.0f, 450.0f},
+            {516.0f, 316.0f}
         });
     AddSentry(
         enemies,
