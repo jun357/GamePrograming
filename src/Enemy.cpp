@@ -65,6 +65,9 @@ namespace
         enemy.moveSpeed = 80.0f;
         enemy.searchDuration = 2.0f;
         enemy.hearingThreshold = 4.0f;
+        enemy.attackCooldown = 0.0f;
+        enemy.attackInterval = 1.0f;
+        enemy.attackDamage = 10;
     }
     void ApplySentryDefaults(Enemy& enemy)
     {
@@ -82,6 +85,9 @@ namespace
         enemy.headSweepMax = 45.0f * DEG_TO_RAD;
         enemy.headSweepSpeed = 0.6f;
         enemy.headSweepDirection = 1;
+        enemy.attackCooldown = 0.0f;
+        enemy.attackInterval = 1.0f;
+        enemy.attackDamage = 10;
     }
     void ApplyOfficerDefaults(Enemy& enemy)
     {
@@ -99,6 +105,9 @@ namespace
         enemy.headSweepMax = 45.0f * DEG_TO_RAD;
         enemy.headSweepSpeed = 0.7f;
         enemy.headSweepDirection = 1;
+        enemy.attackCooldown = 0.0f;
+        enemy.attackInterval = 0.7f;
+        enemy.attackDamage = 20;
     }
 }
 
@@ -578,13 +587,47 @@ static void UpdateReturn(
 
 static void UpdateAlert(
     Enemy& enemy,
-    const SDL_Rect& player,
-    bool& playerDetected)
+    SDL_Rect& player,
+    const std::vector<Wall>& walls,
+    int& playerHP,
+    float dt)
 {
-    Vec2 playerCenter = GetPlayerCenter(player);
+    Vec2 playerCenter =
+        GetPlayerCenter(player);
+
     FacePoint(enemy, playerCenter);
-    // 나중에 경보 시스템을 만들면 여기서 바로 패배시키지 않고 alarmActive 같은 전역 경보 플래그로 바꾸기
-    playerDetected = true;
+
+    if (enemy.attackCooldown > 0.0f)
+    {
+        enemy.attackCooldown -= dt;
+    }
+
+    if (CanSeePlayer(enemy, player, walls))
+    {
+        enemy.lastKnownPlayerPos = playerCenter;
+
+        if (enemy.attackCooldown <= 0.0f)
+        {
+            playerHP -= enemy.attackDamage;
+
+            if (playerHP < 0)
+            {
+                playerHP = 0;
+            }
+
+            enemy.attackCooldown =
+                enemy.attackInterval;
+        }
+    }
+    else
+    {
+        enemy.investigateTarget =
+            enemy.lastKnownPlayerPos;
+
+        ChangeEnemyState(
+            enemy,
+            EnemyState::Investigate);
+    }
 }
 
 // =====================================================
@@ -595,7 +638,8 @@ void UpdateEnemies(
     std::vector<Enemy>& enemies,
     SDL_Rect& player,
     std::vector<Wall>& walls,
-    bool& playerDetected,
+    bool& alarmTriggered,
+    int& playerHP,
     float dt)
 {
     for (auto& enemy : enemies)
@@ -609,11 +653,11 @@ void UpdateEnemies(
             enemy.alerted = false;
             continue;
         }
-
         if (CanSeePlayer(enemy, player, walls))
         {
             enemy.lastKnownPlayerPos = GetPlayerCenter(player);
             ChangeEnemyState(enemy, EnemyState::Alert);
+            alarmTriggered = true;
         }
         // 상태별 행동
         switch (enemy.state)
@@ -631,7 +675,7 @@ void UpdateEnemies(
             UpdateReturn(enemy, walls, dt);
             break;
         case EnemyState::Alert:
-            UpdateAlert(enemy, player, playerDetected);
+            UpdateAlert(enemy, player, walls, playerHP, dt);
             break;
         case EnemyState::Dead:
             break;
