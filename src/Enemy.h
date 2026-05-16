@@ -46,6 +46,12 @@ struct Enemy
     Vec2 homePos = { 0.0f, 0.0f };
     float homeAngle = 0.0f;
     bool initialized = false;
+    bool useHeadSweep = false;
+    float headSweepOffset = 0.0f;
+    float headSweepMin = -0.785398f;
+    float headSweepMax = 0.785398f;
+    float headSweepSpeed = 0.6f;
+    int headSweepDirection = 1;
 
     // =====================================================
     // 순찰 정보
