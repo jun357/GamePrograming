@@ -49,6 +49,12 @@ namespace
         enemy.hearingEnergy = 0.0f;
         enemy.lastNoisePos = { 0.0f, 0.0f };
         enemy.alerted = false;
+        enemy.useHeadSweep = false;
+        enemy.headSweepOffset = 0.0f;
+        enemy.headSweepMin = -45.0f * DEG_TO_RAD;
+        enemy.headSweepMax = 45.0f * DEG_TO_RAD;
+        enemy.headSweepSpeed = 0.6f;
+        enemy.headSweepDirection = 1;
     }
     void ApplyPatrolGuardDefaults(Enemy& enemy)
     {
@@ -66,10 +72,16 @@ namespace
         enemy.angle = 0.0f;
         enemy.fov = 90.0f * DEG_TO_RAD;
         enemy.viewDist = 250.0f;
-        enemy.rotateSpeed = 0.008f;
+        enemy.rotateSpeed = 0.0f;
         enemy.moveSpeed = 70.0f;
         enemy.searchDuration = 2.0f;
         enemy.hearingThreshold = 4.0f;
+        enemy.useHeadSweep = true;
+        enemy.headSweepOffset = 0.0f;
+        enemy.headSweepMin = -45.0f * DEG_TO_RAD;
+        enemy.headSweepMax = 45.0f * DEG_TO_RAD;
+        enemy.headSweepSpeed = 0.6f;
+        enemy.headSweepDirection = 1;
     }
     void ApplyOfficerDefaults(Enemy& enemy)
     {
@@ -81,6 +93,12 @@ namespace
         enemy.moveSpeed = 90.0f;
         enemy.searchDuration = 2.5f;
         enemy.hearingThreshold = 2.5f;
+        enemy.useHeadSweep = true;
+        enemy.headSweepOffset = 0.0f;
+        enemy.headSweepMin = -45.0f * DEG_TO_RAD;
+        enemy.headSweepMax = 45.0f * DEG_TO_RAD;
+        enemy.headSweepSpeed = 0.7f;
+        enemy.headSweepDirection = 1;
     }
 }
 
@@ -258,6 +276,12 @@ static void FacePoint(
     enemy.angle = atan2f(toTarget.y, toTarget.x);
 }
 
+static bool ShouldKeepFacingFixedWhileInvestigating(
+    const Enemy& enemy)
+{
+    return enemy.kind == EnemyKind::Sentry || enemy.kind == EnemyKind::Officer;
+}
+
 static void ChangeEnemyState(
     Enemy& enemy,
     EnemyState newState)
@@ -267,6 +291,12 @@ static void ChangeEnemyState(
 
     enemy.state = newState;
     enemy.stateTimer = 0.0f;
+    
+    if (newState == EnemyState::Investigate &&
+        ShouldKeepFacingFixedWhileInvestigating(enemy))
+    {
+        FacePoint(enemy, enemy.investigateTarget);
+    }
 
     if (newState == EnemyState::Search)
     {
@@ -281,6 +311,33 @@ static bool IsSuspiciousState(EnemyState state)
         state == EnemyState::Search ||
         state == EnemyState::Return ||
         state == EnemyState::Alert;
+}
+
+static void UpdateHeadSweep(
+    Enemy& enemy,
+    float dt)
+{
+    if (!enemy.useHeadSweep)
+        return;
+    
+    enemy.headSweepOffset +=
+        enemy.headSweepDirection *
+        enemy.headSweepSpeed *
+        dt;
+
+    if (enemy.headSweepOffset > enemy.headSweepMax)
+    {
+        enemy.headSweepOffset = enemy.headSweepMax;
+        enemy.headSweepDirection = -1;
+    }
+    else if (enemy.headSweepOffset < enemy.headSweepMin)
+    {
+        enemy.headSweepOffset = enemy.headSweepMin;
+        enemy.headSweepDirection = 1;
+    }
+
+    enemy.angle =
+        enemy.homeAngle + enemy.headSweepOffset;
 }
 
 // =====================================================
@@ -320,11 +377,14 @@ static bool MoveEnemyToward(
     Enemy& enemy,
     Vec2 target,
     const std::vector<Wall>& walls,
-    float dt)
+    float dt,
+    bool updateFacing = true)
 {
     Vec2 toTarget = target - enemy.pos;
     float dist = Length(toTarget);
+
     const float arriveDistance = 3.0f;
+
     if (dist <= arriveDistance)
     {
         enemy.pos = target;
@@ -336,9 +396,16 @@ static bool MoveEnemyToward(
         return false;
 
     Vec2 dir = Normalize(toTarget);
-    FacePoint(enemy, target);
+
+    if (updateFacing)
+    {
+        FacePoint(enemy, target);
+    }
+
     float step = std::min(enemy.moveSpeed * dt, dist);
+
     MoveEnemyBy(enemy, dir * step, walls);
+
     return Length(target - enemy.pos) <= arriveDistance;
 }
 
@@ -422,22 +489,39 @@ static void UpdatePatrol(
     const std::vector<Wall>& walls,
     float dt)
 {
-    if (enemy.kind == EnemyKind::PatrolGuard && !enemy.patrolPoints.empty())
+    // =================================================
+    // 동초: 정해진 경로 순찰
+    // =================================================
+
+    if (enemy.kind == EnemyKind::PatrolGuard)
     {
+        if (enemy.patrolPoints.empty())
+        {
+            return;
+        }
         if (enemy.patrolIndex < 0 || enemy.patrolIndex >= (int)enemy.patrolPoints.size())
         {
             enemy.patrolIndex = 0;
         }
         Vec2 target = enemy.patrolPoints[enemy.patrolIndex];
         bool arrived = MoveEnemyToward(enemy, target, walls, dt);
-
         if (arrived)
         {
-            enemy.patrolIndex = (enemy.patrolIndex + 1) % (int)enemy.patrolPoints.size();
+            enemy.patrolIndex =
+                (enemy.patrolIndex + 1) %
+                (int)enemy.patrolPoints.size();
         }
         return;
     }
-    enemy.angle += enemy.rotateSpeed * dt * 60.0f;
+
+    if (enemy.kind == EnemyKind::Sentry || enemy.kind == EnemyKind::Officer)
+    {
+        if (enemy.useHeadSweep)
+        {
+            UpdateHeadSweep(enemy, dt);
+        }
+        return;
+    }
 }
 
 static void UpdateInvestigate(
@@ -445,7 +529,9 @@ static void UpdateInvestigate(
     const std::vector<Wall>& walls,
     float dt)
 {
-    bool arrived = MoveEnemyToward(enemy, enemy.investigateTarget, walls, dt);
+    bool keepFacingFixed = ShouldKeepFacingFixedWhileInvestigating(enemy);
+    bool arrived = MoveEnemyToward(enemy, enemy.investigateTarget, walls, dt, !keepFacingFixed);
+
     if (arrived)
     {
         ChangeEnemyState(enemy, EnemyState::Search);
