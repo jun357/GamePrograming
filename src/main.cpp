@@ -374,7 +374,7 @@ int main(int argc, char* args[])
 
             bool alarmTriggered = false;
             
-            UpdateEnemies(enemies, player, walls, alarmTriggered, playerHP, dt);
+            UpdateEnemies(enemies, player, walls, alarmActive, alarmTriggered, playerHP, dt);
             if (alarmTriggered)
             {
                 alarmActive = true;
