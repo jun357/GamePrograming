@@ -208,6 +208,15 @@ int main(int argc, char* args[])
     float soundTimer = 0.0f;
 
     // =================================================
+    // 플레이어 체력 및 경보 상태
+    // =================================================
+
+    const int PLAYER_MAX_HP = 100;
+    int playerHP = PLAYER_MAX_HP;
+
+    bool alarmActive = false;
+
+    // =================================================
     // 타이머
     // =================================================
 
@@ -363,35 +372,24 @@ int main(int argc, char* args[])
             // 적 업데이트
             // =========================================
 
-            bool playerDetected = false;
-
-            UpdateEnemies(
-                enemies,
-                player,
-                walls,
-                playerDetected,
-                dt);
-
-            if (playerDetected)
+            bool alarmTriggered = false;
+            
+            UpdateEnemies(enemies, player, walls, alarmTriggered, playerHP, dt);
+            if (alarmTriggered)
             {
-                gameState = LOSE;
-
-                stateTimer =
-                    SDL_GetTicks();
+                alarmActive = true;
             }
-
-            // =========================================
-            // 목표 도착
-            // =========================================
-
-            if (SDL_HasIntersection(
-                &player,
-                &goal))
+            if (playerHP <= 0)
+            {
+                playerHP = 0;
+                gameState = LOSE;
+                stateTimer = SDL_GetTicks();
+            }
+            if (SDL_HasIntersection(&player, &goal))
             {
                 gameState = WIN;
 
-                stateTimer =
-                    SDL_GetTicks();
+                stateTimer = SDL_GetTicks();
             }
         }
         else
@@ -407,6 +405,9 @@ int main(int argc, char* args[])
                     enemies);
 
                 soundParticles.clear();
+
+                playerHP = PLAYER_MAX_HP;
+                alarmActive = false;
 
                 gameState = PLAYING;
             }
