@@ -56,6 +56,7 @@ namespace
         enemy.headSweepSpeed = 0.6f;
         enemy.headSweepDirection = 1;
     }
+
     void ApplyPatrolGuardDefaults(Enemy& enemy)
     {
         enemy.kind = EnemyKind::PatrolGuard;
@@ -67,6 +68,8 @@ namespace
         enemy.hearingThreshold = 4.0f;
         enemy.attackCooldown = 0.0f;
         enemy.attackInterval = 1.0f;
+        enemy.firstShotDelay = 0.5f;
+        enemy.attackRange = 240.0f;
         enemy.attackDamage = 10;
     }
     void ApplySentryDefaults(Enemy& enemy)
@@ -87,6 +90,8 @@ namespace
         enemy.headSweepDirection = 1;
         enemy.attackCooldown = 0.0f;
         enemy.attackInterval = 1.0f;
+        enemy.firstShotDelay = 0.5f;
+        enemy.attackRange = 240.0f;
         enemy.attackDamage = 10;
     }
     void ApplyOfficerDefaults(Enemy& enemy)
@@ -107,6 +112,8 @@ namespace
         enemy.headSweepDirection = 1;
         enemy.attackCooldown = 0.0f;
         enemy.attackInterval = 0.7f;
+        enemy.firstShotDelay = 0.0f;
+        enemy.attackRange = 240.0f;
         enemy.attackDamage = 20;
     }
 }
@@ -489,6 +496,60 @@ static bool CanSeePlayer(
     return true;
 }
 
+static float DistanceSqToPlayer(
+    const Enemy& enemy,
+    const SDL_Rect& player)
+{
+    Vec2 playerCenter = GetPlayerCenter(player);
+
+    float dx = playerCenter.x - enemy.pos.x;
+    float dy = playerCenter.y - enemy.pos.y;
+
+    return dx * dx + dy * dy;
+}
+
+static bool IsPlayerInAttackRange(
+    const Enemy& enemy,
+    const SDL_Rect& player)
+{
+    float distSq =
+        DistanceSqToPlayer(enemy, player);
+
+    return distSq <=
+        enemy.attackRange * enemy.attackRange;
+}
+
+static float GetInitialAttackDelay(
+    const Enemy& enemy,
+    bool alarmActive)
+{
+    if (enemy.kind == EnemyKind::Officer)
+    {
+        return 0.0f;
+    }
+
+    if (alarmActive)
+    {
+        return 0.0f;
+    }
+
+    return enemy.firstShotDelay;
+}
+
+static void ApplyEnemyGunHit(
+    Enemy& enemy,
+    int& playerHP)
+{
+    playerHP -= enemy.attackDamage;
+
+    if (playerHP < 0)
+    {
+        playerHP = 0;
+    }
+
+    enemy.attackCooldown = enemy.attackInterval;
+}
+
 // =====================================================
 // 상태별 업데이트
 // =====================================================
@@ -498,10 +559,6 @@ static void UpdatePatrol(
     const std::vector<Wall>& walls,
     float dt)
 {
-    // =================================================
-    // 동초: 정해진 경로 순찰
-    // =================================================
-
     if (enemy.kind == EnemyKind::PatrolGuard)
     {
         if (enemy.patrolPoints.empty())
@@ -602,24 +659,10 @@ static void UpdateAlert(
         enemy.attackCooldown -= dt;
     }
 
-    if (CanSeePlayer(enemy, player, walls))
-    {
-        enemy.lastKnownPlayerPos = playerCenter;
+    bool canSee =
+        CanSeePlayer(enemy, player, walls);
 
-        if (enemy.attackCooldown <= 0.0f)
-        {
-            playerHP -= enemy.attackDamage;
-
-            if (playerHP < 0)
-            {
-                playerHP = 0;
-            }
-
-            enemy.attackCooldown =
-                enemy.attackInterval;
-        }
-    }
-    else
+    if (!canSee)
     {
         enemy.investigateTarget =
             enemy.lastKnownPlayerPos;
@@ -627,6 +670,23 @@ static void UpdateAlert(
         ChangeEnemyState(
             enemy,
             EnemyState::Investigate);
+
+        return;
+    }
+
+    enemy.lastKnownPlayerPos =
+        playerCenter;
+
+    if (!IsPlayerInAttackRange(enemy, player))
+    {
+        return;
+    }
+
+    if (enemy.attackCooldown <= 0.0f)
+    {
+        ApplyEnemyGunHit(
+            enemy,
+            playerHP);
     }
 }
 
@@ -638,6 +698,7 @@ void UpdateEnemies(
     std::vector<Enemy>& enemies,
     SDL_Rect& player,
     std::vector<Wall>& walls,
+    bool alarmActive,
     bool& alarmTriggered,
     int& playerHP,
     float dt)
@@ -653,10 +714,17 @@ void UpdateEnemies(
             enemy.alerted = false;
             continue;
         }
-        if (CanSeePlayer(enemy, player, walls))
+        bool canSeePlayer = CanSeePlayer(enemy, player, walls);
+        if (canSeePlayer)
         {
             enemy.lastKnownPlayerPos = GetPlayerCenter(player);
-            ChangeEnemyState(enemy, EnemyState::Alert);
+            bool wasAlreadyAlert = enemy.state == EnemyState::Alert;
+
+            if (!wasAlreadyAlert)
+            {
+                ChangeEnemyState(enemy, EnemyState::Alert);
+                enemy.attackCooldown = GetInitialAttackDelay(enemy, alarmActive);
+            }
             alarmTriggered = true;
         }
         // 상태별 행동
