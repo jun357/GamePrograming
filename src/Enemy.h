@@ -77,13 +77,20 @@ struct Enemy
     Vec2 lastNoisePos = { 0.0f, 0.0f };
 
     bool alerted = false;
+
+    // =====================================================
+    // 공격 정보
+    // =====================================================
+    float attackCooldown = 0.0f;
+    float attackInterval = 0.8f;
+    int attackDamage = 20;
 };
 
 void UpdateEnemies(
     std::vector<Enemy>& enemies,
     SDL_Rect& player,
     std::vector<Wall>& walls,
-    bool& playerDetected,
+    bool& alarmTriggered,
     float dt);
 
 void DrawFOV(
