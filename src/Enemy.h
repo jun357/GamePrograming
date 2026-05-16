@@ -81,8 +81,10 @@ struct Enemy
     // =====================================================
     // 공격 정보
     // =====================================================
-    float attackCooldown = 0.0f;
-    float attackInterval = 0.8f;
+    float attackCooldown = 0.0f;   // 다음 발사까지 남은 시간
+    float attackInterval = 0.8f;   // 반복 발사 간격
+    float firstShotDelay = 0.5f;   // 비경보 상태에서 첫 발까지 대기 시간
+    float attackRange = 250.0f;    // 총 사정거리
     int attackDamage = 20;
 };
 
@@ -90,7 +92,9 @@ void UpdateEnemies(
     std::vector<Enemy>& enemies,
     SDL_Rect& player,
     std::vector<Wall>& walls,
+    bool alarmActive,
     bool& alarmTriggered,
+    int& playerHP,
     float dt);
 
 void DrawFOV(
