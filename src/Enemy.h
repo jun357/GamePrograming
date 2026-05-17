@@ -46,6 +46,12 @@ struct Enemy
     Vec2 homePos = { 0.0f, 0.0f };
     float homeAngle = 0.0f;
     bool initialized = false;
+    bool useHeadSweep = false;
+    float headSweepOffset = 0.0f;
+    float headSweepMin = -0.785398f;
+    float headSweepMax = 0.785398f;
+    float headSweepSpeed = 0.6f;
+    int headSweepDirection = 1;
 
     // =====================================================
     // 순찰 정보
@@ -71,13 +77,24 @@ struct Enemy
     Vec2 lastNoisePos = { 0.0f, 0.0f };
 
     bool alerted = false;
+
+    // =====================================================
+    // 공격 정보
+    // =====================================================
+    float attackCooldown = 0.0f;   // 다음 발사까지 남은 시간
+    float attackInterval = 0.8f;   // 반복 발사 간격
+    float firstShotDelay = 0.5f;   // 비경보 상태에서 첫 발까지 대기 시간
+    float attackRange = 250.0f;    // 총 사정거리
+    int attackDamage = 20;
 };
 
 void UpdateEnemies(
     std::vector<Enemy>& enemies,
     SDL_Rect& player,
     std::vector<Wall>& walls,
-    bool& playerDetected,
+    bool alarmActive,
+    bool& alarmTriggered,
+    int& playerHP,
     float dt);
 
 void DrawFOV(
