@@ -18,6 +18,37 @@ Vec2 Vec2::operator*(float s) const
     return { x * s, y * s };
 }
 
+Vec2 Vec2::operator/(float s) const
+{
+    return
+    {
+        x / s,
+        y / s
+    };
+}
+
+// 추가된 복합 대입 연산자들
+Vec2& Vec2::operator+=(const Vec2& o)
+{
+    x += o.x;
+    y += o.y;
+    return *this;
+}
+
+Vec2& Vec2::operator-=(const Vec2& o)
+{
+    x -= o.x;
+    y -= o.y;
+    return *this;
+}
+
+Vec2& Vec2::operator*=(float s)
+{
+    x *= s;
+    y *= s;
+    return *this;
+}
+
 float Length(const Vec2& v)
 {
     return sqrtf(v.x * v.x + v.y * v.y);
@@ -41,4 +72,12 @@ float Dot(const Vec2& a, const Vec2& b)
 float RandomFloat()
 {
     return (float)rand() / (float)RAND_MAX;
+}
+
+Vec2 Reflect(
+    const Vec2& v,
+    const Vec2& n)
+{
+    return
+        v - n * (2.0f * Dot(v, n));
 }

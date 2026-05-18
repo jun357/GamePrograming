@@ -3,32 +3,267 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Math.h"
+
+// =====================================================
+// 사운드 생성
+// =====================================================
+
 void EmitSound(
     std::vector<SoundParticle>& particles,
     Vec2 origin,
     int count,
-    float energy)
+    float speed)
 {
     for (int i = 0; i < count; i++)
     {
         float angle =
             RandomFloat() * 6.283185f;
 
-        SoundParticle p;
-
-        p.pos = origin;
-
-        p.dir =
+        Vec2 dir =
         {
             cosf(angle),
             sinf(angle)
         };
 
-        p.energy = energy;
+        SoundParticle p;
+
+        p.pos = origin;
+
+        p.vel = dir * speed;
+
+        p.radius = 2.0f;
+
+        p.mass = 1.0f;
+
+        p.alive = true;
 
         particles.push_back(p);
     }
 }
+
+void GeneratePorousWall(Wall& w, float solidProbability) { w.cells.resize( w.gridWidth * w.gridHeight); for (int y = 0; y < w.gridHeight; y++) { for (int x = 0; x < w.gridWidth; x++) { auto& cell = GetCell(w, x, y); cell.solid = RandomFloat() < solidProbability; } } }
+void EnsureWallGenerated(Wall& w) { if (!w.generated) { GeneratePorousWall(w, 0.65f); w.generated = true; } } 
+
+// =====================================================
+// 셀 충돌
+// =====================================================
+
+static void ResolveCellCollision(
+    SoundParticle& p,
+    Wall& w)
+{
+    SDL_Rect rect = w.rect;
+
+    // =============================================
+    // 벽 영역 밖
+    // =============================================
+
+    if (
+        p.pos.x < rect.x ||
+        p.pos.y < rect.y ||
+        p.pos.x >= rect.x + rect.w ||
+        p.pos.y >= rect.y + rect.h)
+    {
+        return;
+    }
+
+    EnsureWallGenerated(w);
+
+    // =============================================
+    // 셀 좌표
+    // =============================================
+
+    int gx =
+        (int)(p.pos.x - rect.x)
+        / w.cellSize;
+
+    int gy =
+        (int)(p.pos.y - rect.y)
+        / w.cellSize;
+
+    if (
+        gx < 0 ||
+        gy < 0 ||
+        gx >= w.gridWidth ||
+        gy >= w.gridHeight)
+    {
+        return;
+    }
+
+    WallCell& cell =
+        GetCell(w, gx, gy);
+
+    // =============================================
+    // 빈 셀은 통과
+    // =============================================
+
+    if (!cell.solid)
+        return;
+
+    // =============================================
+    // 셀 중심
+    // =============================================
+
+    float cx =
+        rect.x +
+        gx * w.cellSize +
+        w.cellSize * 0.5f;
+
+    float cy =
+        rect.y +
+        gy * w.cellSize +
+        w.cellSize * 0.5f;
+
+    Vec2 delta =
+    {
+        p.pos.x - cx,
+        p.pos.y - cy
+    };
+
+    float half =
+        w.cellSize * 0.5f;
+
+    // =============================================
+    // penetration
+    // =============================================
+
+    float px =
+        half - fabsf(delta.x);
+
+    float py =
+        half - fabsf(delta.y);
+
+    Vec2 normal;
+
+    // =============================================
+    // 최소 penetration 축 선택
+    // =============================================
+
+    if (px < py)
+    {
+        normal =
+        {
+            delta.x > 0 ? 1.0f : -1.0f,
+            0
+        };
+
+        p.pos.x += normal.x * px;
+    }
+    else
+    {
+        normal =
+        {
+            0,
+            delta.y > 0 ? 1.0f : -1.0f
+        };
+
+        p.pos.y += normal.y * py;
+    }
+
+    // =============================================
+    // 완전 탄성 반사
+    // =============================================
+
+    p.vel =
+        Reflect(
+            p.vel,
+            normal);
+
+    // =============================================
+    // roughness scattering
+    // =============================================
+
+    p.vel.x +=
+        (RandomFloat() - 0.5f)
+        * cell.roughness;
+
+    p.vel.y +=
+        (RandomFloat() - 0.5f)
+        * cell.roughness;
+}
+
+// =====================================================
+// 입자 충돌
+// =====================================================
+
+static void ResolveParticleCollision(
+    SoundParticle& a,
+    SoundParticle& b)
+{
+    Vec2 delta =
+        b.pos - a.pos;
+
+    float dist =
+        Length(delta);
+
+    float minDist =
+        a.radius + b.radius;
+
+    if (dist <= 0.0001f)
+        return;
+
+    if (dist >= minDist)
+        return;
+
+    Vec2 normal =
+        Normalize(delta);
+
+    // =============================================
+    // penetration correction
+    // =============================================
+
+    float penetration =
+        minDist - dist;
+
+    Vec2 correction =
+        normal
+        * penetration
+        * 0.5f;
+
+    a.pos -= correction;
+    b.pos += correction;
+
+    // =============================================
+    // relative velocity
+    // =============================================
+
+    Vec2 rv =
+        b.vel - a.vel;
+
+    float velAlongNormal =
+        Dot(rv, normal);
+
+    if (velAlongNormal > 0)
+        return;
+
+    // =============================================
+    // 완전 탄성 충돌
+    // =============================================
+
+    float restitution = 1.0f;
+
+    float j =
+        -(1.0f + restitution)
+        * velAlongNormal;
+
+    j /=
+        (1.0f / a.mass)
+        + (1.0f / b.mass);
+
+    Vec2 impulse =
+        normal * j;
+
+    a.vel -=
+        impulse / a.mass;
+
+    b.vel +=
+        impulse / b.mass;
+}
+
+// =====================================================
+// 업데이트
+// =====================================================
 
 void UpdateSoundParticles(
     std::vector<SoundParticle>& particles,
@@ -36,130 +271,111 @@ void UpdateSoundParticles(
     std::vector<Wall>& walls,
     float dt)
 {
-    const float speed = 220.0f;
+    // =============================================
+    // tunneling 방지
+    // =============================================
 
-    for (auto& p : particles)
+    const int substeps = 4;
+
+    float stepDt =
+        dt / (float)substeps;
+
+    for (int step = 0;
+         step < substeps;
+         step++)
     {
-        if (!p.alive)
-            continue;
+        // =========================================
+        // 이동
+        // =========================================
 
-        Vec2 oldPos = p.pos;
-
-        p.pos =
-            p.pos + p.dir * speed * dt;
-
-        p.energy *= expf(-1.5f * dt);
-
-        float deathChance =
-            (1.0f - p.energy) * 0.4f * dt;
-
-        if (RandomFloat() < deathChance)
+        for (auto& p : particles)
         {
-            p.alive = false;
-            continue;
-        }
+            if (!p.alive)
+                continue;
 
-        for (auto& w : walls)
-        {
-            SDL_Rect rect = w.rect;
+            p.pos +=
+                p.vel * stepDt;
 
-            if (p.pos.x >= rect.x &&
-                p.pos.x <= rect.x + rect.w &&
-                p.pos.y >= rect.y &&
-                p.pos.y <= rect.y + rect.h)
+            // =====================================
+            // 🔥 고정 확률 소멸
+            // =====================================
+
+            const float deathRate = 0.8f; // 초당 확률
+
+            if (RandomFloat() < deathRate * stepDt)
             {
-                float r = RandomFloat();
-
-                // =====================================
-                // ABSORB
-                // =====================================
-
-                if (r < w.absorption)
-                {
-                    p.alive = false;
-                    break;
-                }
-
-                // =====================================
-                // REFLECT
-                // =====================================
-
-                else if (r < w.absorption + w.reflection)
-                {
-                    float cx = rect.x + rect.w * 0.5f;
-                    float cy = rect.y + rect.h * 0.5f;
-
-                    float dx = p.pos.x - cx;
-                    float dy = p.pos.y - cy;
-
-                    float px =
-                        (rect.w * 0.5f) - fabs(dx);
-
-                    float py =
-                        (rect.h * 0.5f) - fabs(dy);
-
-                    if (px < py)
-                        p.dir.x *= -1.0f;
-                    else
-                        p.dir.y *= -1.0f;
-
-                    p.energy *= 0.75f;
-
-                    p.bounces++;
-
-                    p.pos = oldPos;
-                }
-
-                // =====================================
-                // TRANSMIT
-                // =====================================
-
-                else
-                {
-                    // transmission: sound passes through wall
-
-                    p.energy *= w.transmission;
-
-                    // slight scattering (prevents perfect straight tunneling)
-                    float spread = 0.25f;
-
-                    float angle =
-                        atan2f(p.dir.y, p.dir.x);
-
-                    angle += (RandomFloat() - 0.5f) * spread;
-
-                    p.dir =
-                    {
-                        cosf(angle),
-                        sinf(angle)
-                    };
-                }
+                p.alive = false;
+                continue;
             }
         }
 
-        for (auto& enemy : enemies)
+        // =========================================
+        // 셀 충돌
+        // =========================================
+
+        for (auto& p : particles)
         {
-            float ex =
-                enemy.rect.x +
-                enemy.rect.w * 0.5f;
+            if (!p.alive)
+                continue;
 
-            float ey =
-                enemy.rect.y +
-                enemy.rect.h * 0.5f;
+            for (auto& w : walls)
+            {
+                ResolveCellCollision(
+                    p,
+                    w);
+            }
+        }
 
-            float dx = ex - p.pos.x;
-            float dy = ey - p.pos.y;
+        // =========================================
+        // 입자 충돌
+        // =========================================
+
+        for (size_t i = 0;
+             i < particles.size();
+             i++)
+        {
+            for (size_t j = i + 1;
+                 j < particles.size();
+                 j++)
+            {
+                ResolveParticleCollision(
+                    particles[i],
+                    particles[j]);
+            }
+        }
+    }
+
+    // =============================================
+    // 적 hearing
+    // =============================================
+
+    for (auto& enemy : enemies)
+    {
+        float ex =
+            enemy.rect.x +
+            enemy.rect.w * 0.5f;
+
+        float ey =
+            enemy.rect.y +
+            enemy.rect.h * 0.5f;
+
+        for (auto& p : particles)
+        {
+            float dx =
+                ex - p.pos.x;
+
+            float dy =
+                ey - p.pos.y;
 
             float distSq =
                 dx * dx + dy * dy;
 
-            float hearRadius = 24.0f;
+            float hearRadius = 32.0f;
 
             if (distSq <
                 hearRadius * hearRadius)
             {
-                enemy.hearingEnergy +=
-                    p.energy;
+                enemy.hearingEnergy += 1.0f;
             }
         }
     }

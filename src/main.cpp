@@ -168,26 +168,17 @@ int main(int argc, char* args[])
     {
         // concrete
         {
-            {200,150,100,200},
-            0.6f,
-            0.35f,
-            0.05f
+            {200,150,100,200}
         },
 
         // wood
         {
-            {400,100,50,300},
-            0.3f,
-            0.4f,
-            0.3f
+            {400,100,50,300}
         },
 
         // thin divider
         {
-            {100,400,300,50},
-            0.1f,
-            0.2f,
-            0.7f
+            {100,400,300,50}
         }
     };
 
@@ -334,7 +325,7 @@ int main(int argc, char* args[])
                             soundParticles,
                             playerCenter,
                             14,
-                            1.0f);
+                            220.0f);
 
                         soundTimer = 0.0f;
                     }
@@ -347,7 +338,7 @@ int main(int argc, char* args[])
                             soundParticles,
                             playerCenter,
                             5,
-                            0.6f);
+                            220.0f);
 
                         soundTimer = 0.0f;
                     }

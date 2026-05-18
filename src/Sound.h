@@ -11,11 +11,11 @@
 struct SoundParticle
 {
     Vec2 pos;
-    Vec2 dir;
+    Vec2 vel;
 
-    float energy;
+    float radius = 2.0f;
 
-    int bounces = 0;
+    float mass = 1.0f;
 
     bool alive = true;
 };
