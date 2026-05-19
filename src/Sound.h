@@ -27,7 +27,11 @@ void EmitSound(
     float energy);
 
 void UpdateSoundParticles(
-    std::vector<SoundParticle>& particles,
-    std::vector<Enemy>& enemies,
+    const std::vector<SoundParticle>& read,
+    std::vector<SoundParticle>& write,
+    const std::vector<Enemy>& enemies,
+    std::vector<float>& hearingBuffer,
     std::vector<Wall>& walls,
     float dt);
+
+void CleanUpParticles(std::vector<SoundParticle>& read, std::vector<SoundParticle>& write);

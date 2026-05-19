@@ -4,6 +4,7 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <thread>
 
 #include "Globals.h"
 #include "Math.h"
@@ -324,7 +325,7 @@ int main(int argc, char* args[])
                         EmitSound(
                             soundParticles,
                             playerCenter,
-                            14,
+                            23,
                             220.0f);
 
                         soundTimer = 0.0f;
@@ -337,7 +338,7 @@ int main(int argc, char* args[])
                         EmitSound(
                             soundParticles,
                             playerCenter,
-                            5,
+                            7,
                             220.0f);
 
                         soundTimer = 0.0f;
@@ -349,23 +350,50 @@ int main(int argc, char* args[])
                 soundTimer = 0.0f;
             }
 
+            bool alarmTriggered = false;
+
+            // 버퍼
+            std::vector<SoundParticle> particlesNext;
+            std::vector<float> hearingBuffer(
+            enemies.size(),
+            0.0f);
+
             // =========================================
             // 사운드 업데이트
             // =========================================
-
-            UpdateSoundParticles(
-                soundParticles,
-                enemies,
-                walls,
-                dt);
+            std::thread soundThread(
+            UpdateSoundParticles,
+            std::cref(soundParticles),
+            std::ref(particlesNext),
+            std::cref(enemies),
+            std::ref(hearingBuffer),
+            std::ref(walls),
+            dt);
 
             // =========================================
             // 적 업데이트
             // =========================================
+            std::thread enemyThread(
+            UpdateEnemies,
+            std::ref(enemies),
+            std::ref(player),
+            std::cref(walls),
+            std::ref(alarmActive),
+            std::ref(alarmTriggered),
+            std::ref(playerHP),
+            dt);
 
-            bool alarmTriggered = false;
+            soundThread.join();
+            enemyThread.join();
             
-            UpdateEnemies(enemies, player, walls, alarmActive, alarmTriggered, playerHP, dt);
+            CleanUpParticles(soundParticles, particlesNext);
+
+            for (size_t i = 0; i < enemies.size(); ++i)
+            {
+                enemies[i].hearingEnergy +=
+                    hearingBuffer[i];
+            }
+
             if (alarmTriggered)
             {
                 alarmActive = true;

@@ -50,7 +50,8 @@ void EnsureWallGenerated(Wall& w) { if (!w.generated) { GeneratePorousWall(w, 0.
 // =====================================================
 
 static void ResolveCellCollision(
-    SoundParticle& p,
+    const SoundParticle& in,
+    SoundParticle& out,
     Wall& w)
 {
     SDL_Rect rect = w.rect;
@@ -59,11 +60,10 @@ static void ResolveCellCollision(
     // 벽 영역 밖
     // =============================================
 
-    if (
-        p.pos.x < rect.x ||
-        p.pos.y < rect.y ||
-        p.pos.x >= rect.x + rect.w ||
-        p.pos.y >= rect.y + rect.h)
+    if (in.pos.x < rect.x ||
+        in.pos.y < rect.y ||
+        in.pos.x >= rect.x + rect.w ||
+        in.pos.y >= rect.y + rect.h)
     {
         return;
     }
@@ -74,25 +74,15 @@ static void ResolveCellCollision(
     // 셀 좌표
     // =============================================
 
-    int gx =
-        (int)(p.pos.x - rect.x)
-        / w.cellSize;
+    int gx = (int)(in.pos.x - rect.x) / w.cellSize;
+    int gy = (int)(in.pos.y - rect.y) / w.cellSize;
 
-    int gy =
-        (int)(p.pos.y - rect.y)
-        / w.cellSize;
-
-    if (
-        gx < 0 ||
-        gy < 0 ||
+    if (gx < 0 || gy < 0 ||
         gx >= w.gridWidth ||
         gy >= w.gridHeight)
-    {
         return;
-    }
 
-    WallCell& cell =
-        GetCell(w, gx, gy);
+    const WallCell& cell = GetCell(w, gx, gy);
 
     // =============================================
     // 빈 셀은 통과
@@ -105,36 +95,23 @@ static void ResolveCellCollision(
     // 셀 중심
     // =============================================
 
-    float cx =
-        rect.x +
-        gx * w.cellSize +
-        w.cellSize * 0.5f;
+    float cx = rect.x + gx * w.cellSize + w.cellSize * 0.5f;
+    float cy = rect.y + gy * w.cellSize + w.cellSize * 0.5f;
 
-    float cy =
-        rect.y +
-        gy * w.cellSize +
-        w.cellSize * 0.5f;
+    Vec2 delta = { in.pos.x - cx, in.pos.y - cy };
 
-    Vec2 delta =
-    {
-        p.pos.x - cx,
-        p.pos.y - cy
-    };
-
-    float half =
-        w.cellSize * 0.5f;
+    float half = w.cellSize * 0.5f;
 
     // =============================================
     // penetration
     // =============================================
 
-    float px =
-        half - fabsf(delta.x);
-
-    float py =
-        half - fabsf(delta.y);
+    float px = half - fabsf(delta.x);
+    float py = half - fabsf(delta.y);
 
     Vec2 normal;
+
+    SoundParticle temp = out;
 
     // =============================================
     // 최소 penetration 축 선택
@@ -142,45 +119,30 @@ static void ResolveCellCollision(
 
     if (px < py)
     {
-        normal =
-        {
-            delta.x > 0 ? 1.0f : -1.0f,
-            0
-        };
-
-        p.pos.x += normal.x * px;
+        normal = { delta.x > 0 ? 1.f : -1.f, 0 };
+        temp.pos.x += normal.x * px;
     }
     else
     {
-        normal =
-        {
-            0,
-            delta.y > 0 ? 1.0f : -1.0f
-        };
-
-        p.pos.y += normal.y * py;
+        normal = { 0, delta.y > 0 ? 1.f : -1.f };
+        temp.pos.y += normal.y * py;
     }
 
     // =============================================
     // 완전 탄성 반사
     // =============================================
 
-    p.vel =
-        Reflect(
-            p.vel,
-            normal);
+    temp.vel = Reflect(in.vel, normal);
 
     // =============================================
     // roughness scattering
     // =============================================
 
-    p.vel.x +=
-        (RandomFloat() - 0.5f)
-        * cell.roughness;
 
-    p.vel.y +=
-        (RandomFloat() - 0.5f)
-        * cell.roughness;
+    temp.vel.x += (RandomFloat() - 0.5f) * cell.roughness;
+    temp.vel.y += (RandomFloat() - 0.5f) * cell.roughness;
+
+    out = temp;
 }
 
 // =====================================================
@@ -188,51 +150,39 @@ static void ResolveCellCollision(
 // =====================================================
 
 static void ResolveParticleCollision(
-    SoundParticle& a,
-    SoundParticle& b)
+    const SoundParticle& aIn,
+    const SoundParticle& bIn,
+    SoundParticle& aOut,
+    SoundParticle& bOut)
 {
-    Vec2 delta =
-        b.pos - a.pos;
+    Vec2 delta = bIn.pos - aIn.pos;
 
-    float dist =
-        Length(delta);
+    float dist = Length(delta);
+    float minDist = aIn.radius + bIn.radius;
 
-    float minDist =
-        a.radius + b.radius;
-
-    if (dist <= 0.0001f)
+    if (dist <= 0.0001f || dist >= minDist)
         return;
 
-    if (dist >= minDist)
-        return;
-
-    Vec2 normal =
-        Normalize(delta);
+    Vec2 normal = Normalize(delta);
 
     // =============================================
     // penetration correction
     // =============================================
 
-    float penetration =
-        minDist - dist;
+    float penetration = minDist - dist;
 
-    Vec2 correction =
-        normal
-        * penetration
-        * 0.5f;
+    Vec2 correction = normal * (penetration * 0.5f);
 
-    a.pos -= correction;
-    b.pos += correction;
+    aOut.pos -= correction;
+    bOut.pos += correction;
 
     // =============================================
     // relative velocity
     // =============================================
 
-    Vec2 rv =
-        b.vel - a.vel;
+    Vec2 rv = bIn.vel - aIn.vel;
 
-    float velAlongNormal =
-        Dot(rv, normal);
+    float velAlongNormal = Dot(rv, normal);
 
     if (velAlongNormal > 0)
         return;
@@ -244,21 +194,14 @@ static void ResolveParticleCollision(
     float restitution = 1.0f;
 
     float j =
-        -(1.0f + restitution)
-        * velAlongNormal;
+        -(1.0f + restitution) * velAlongNormal;
 
-    j /=
-        (1.0f / a.mass)
-        + (1.0f / b.mass);
+    j /= (1.0f / aIn.mass) + (1.0f / bIn.mass);
 
-    Vec2 impulse =
-        normal * j;
+    Vec2 impulse = normal * j;
 
-    a.vel -=
-        impulse / a.mass;
-
-    b.vel +=
-        impulse / b.mass;
+    aOut.vel -= impulse / aIn.mass;
+    bOut.vel += impulse / bIn.mass;
 }
 
 // =====================================================
@@ -266,35 +209,29 @@ static void ResolveParticleCollision(
 // =====================================================
 
 void UpdateSoundParticles(
-    std::vector<SoundParticle>& particles,
-    std::vector<Enemy>& enemies,
+    const std::vector<SoundParticle>& read,
+    std::vector<SoundParticle>& write,
+    const std::vector<Enemy>& enemies,
+    std::vector<float>& hearingBuffer,
     std::vector<Wall>& walls,
     float dt)
 {
-    // =============================================
-    // tunneling 방지
-    // =============================================
+    write = read; // 기본 복사 (중요)
 
     const int substeps = 4;
+    float stepDt = dt / substeps;
 
-    float stepDt =
-        dt / (float)substeps;
-
-    for (int step = 0;
-         step < substeps;
-         step++)
+    for (int s = 0; s < substeps; s++)
     {
         // =========================================
         // 이동
         // =========================================
 
-        for (auto& p : particles)
+        for (int i = 0; i < read.size(); i++)
         {
-            if (!p.alive)
-                continue;
+            if (!read[i].alive) continue;
 
-            p.pos +=
-                p.vel * stepDt;
+            write[i].pos += read[i].vel * stepDt;
 
             // =====================================
             // 🔥 고정 확률 소멸
@@ -304,7 +241,7 @@ void UpdateSoundParticles(
 
             if (RandomFloat() < deathRate * stepDt)
             {
-                p.alive = false;
+                write[i].alive = false;
                 continue;
             }
         }
@@ -313,15 +250,15 @@ void UpdateSoundParticles(
         // 셀 충돌
         // =========================================
 
-        for (auto& p : particles)
+        for (int i = 0; i < read.size(); i++)
         {
-            if (!p.alive)
-                continue;
+            if (!read[i].alive) continue;
 
             for (auto& w : walls)
             {
                 ResolveCellCollision(
-                    p,
+                    read[i],
+                    write[i],
                     w);
             }
         }
@@ -330,63 +267,67 @@ void UpdateSoundParticles(
         // 입자 충돌
         // =========================================
 
-        for (size_t i = 0;
-             i < particles.size();
-             i++)
+        for (int i = 0; i < read.size(); i++)
+        for (int j = i + 1; j < read.size(); j++)
         {
-            for (size_t j = i + 1;
-                 j < particles.size();
-                 j++)
+            ResolveParticleCollision(
+                read[i], read[j],
+                write[i], write[j]);
+        }
+
+        // =============================================
+        // 적 hearing
+        // =============================================
+
+        for (size_t i = 0; i < enemies.size(); ++i)
+        {
+            auto& enemy = enemies[i];
+            
+            float ex =
+                enemy.rect.x +
+                enemy.rect.w * 0.5f;
+
+            float ey =
+                enemy.rect.y +
+                enemy.rect.h * 0.5f;
+
+            for (auto& p : read)
             {
-                ResolveParticleCollision(
-                    particles[i],
-                    particles[j]);
+                float dx =
+                    ex - p.pos.x;
+
+                float dy =
+                    ey - p.pos.y;
+
+                float distSq =
+                    dx * dx + dy * dy;
+
+                float hearRadius = 32.0f;
+
+                if (distSq <
+                    hearRadius * hearRadius)
+                {
+                    hearingBuffer[i] += 1.0f;
+                }
             }
         }
     }
+}
 
-    // =============================================
-    // 적 hearing
-    // =============================================
+void CleanUpParticles(
+    std::vector<SoundParticle>& read,
+    std::vector<SoundParticle>& write)
+{
+    // swap
+    std::swap(read, write);
 
-    for (auto& enemy : enemies)
-    {
-        float ex =
-            enemy.rect.x +
-            enemy.rect.w * 0.5f;
-
-        float ey =
-            enemy.rect.y +
-            enemy.rect.h * 0.5f;
-
-        for (auto& p : particles)
-        {
-            float dx =
-                ex - p.pos.x;
-
-            float dy =
-                ey - p.pos.y;
-
-            float distSq =
-                dx * dx + dy * dy;
-
-            float hearRadius = 32.0f;
-
-            if (distSq <
-                hearRadius * hearRadius)
-            {
-                enemy.hearingEnergy += 1.0f;
-            }
-        }
-    }
-
-    particles.erase(
+    read.erase(
         std::remove_if(
-            particles.begin(),
-            particles.end(),
+            read.begin(),
+            read.end(),
             [](const SoundParticle& p)
             {
                 return !p.alive;
             }),
-        particles.end());
+        read.end());
 }

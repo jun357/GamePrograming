@@ -91,7 +91,7 @@ struct Enemy
 void UpdateEnemies(
     std::vector<Enemy>& enemies,
     SDL_Rect& player,
-    std::vector<Wall>& walls,
+    const std::vector<Wall>& walls,
     bool alarmActive,
     bool& alarmTriggered,
     int& playerHP,
