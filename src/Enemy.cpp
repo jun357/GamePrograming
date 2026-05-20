@@ -526,7 +526,7 @@ static float GetInitialAttackDelay(
 {
     if (enemy.kind == EnemyKind::Officer)
     {
-        return 0.15f;
+        return alarmActive ? 0.15f : 0.25f;
     }
 
     if (alarmActive)
