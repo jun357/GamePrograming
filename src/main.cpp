@@ -498,7 +498,8 @@ int main(int argc, char* args[])
             DrawFOV(
                 renderer,
                 enemy,
-                walls);
+                walls,
+                camera);
         }
 
         // =============================================
