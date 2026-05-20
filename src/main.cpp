@@ -12,6 +12,7 @@
 #include "Player.h"
 #include "Sound.h"
 #include "Wall.h"
+#include "Camera.h"
 
 // =====================================================
 // 게임 상태
@@ -192,6 +193,12 @@ int main(int argc, char* args[])
     ResetStage(player, enemies);
 
     // =================================================
+    // 카메라
+    // =================================================
+    Camera2D camera;
+    camera.zoom = 1.0f;
+
+    // =================================================
     // 게임 상태
     // =================================================
 
@@ -317,6 +324,8 @@ int main(int argc, char* args[])
                 player.x + player.w * 0.5f,
                 player.y + player.h * 0.5f
             };
+
+            camera.FollowImmediate(playerCenter.x, playerCenter.y);
 
             if (isMoving)
             {
@@ -505,9 +514,8 @@ int main(int argc, char* args[])
 
         for (auto& w : walls)
         {
-            SDL_RenderFillRect(
-                renderer,
-                &w.rect);
+            SDL_Rect wallScreen = camera.WorldToScreenRect(w.rect);
+            SDL_RenderFillRect(renderer, &wallScreen);
         }
 
         // =============================================
@@ -521,9 +529,8 @@ int main(int argc, char* args[])
             0,
             255);
 
-        SDL_RenderDrawRect(
-            renderer,
-            &goal);
+        SDL_Rect goalScreen = camera.WorldToScreenRect(goal);
+        SDL_RenderDrawRect(renderer, &goalScreen);
 
         // =============================================
         // 플레이어
@@ -536,9 +543,8 @@ int main(int argc, char* args[])
             0,
             255);
 
-        SDL_RenderFillRect(
-            renderer,
-            &player);
+        SDL_Rect playerScreen = camera.WorldToScreenRect(player);
+        SDL_RenderFillRect(renderer, &playerScreen);
 
         // =============================================
         // 적
@@ -564,10 +570,8 @@ int main(int argc, char* args[])
                     0,
                     255);
             }
-
-            SDL_RenderFillRect(
-                renderer,
-                &enemy.rect);
+            SDL_Rect enemyScreen = camera.WorldToScreenRect(enemy.rect);
+            SDL_RenderFillRect(renderer, &enemyScreen);
         }
 
         // =============================================
@@ -583,10 +587,11 @@ int main(int argc, char* args[])
 
         for (auto& p : soundParticles)
         {
+            SDL_Point particleScreen = camera.WorldToScreenPoint(p.pos);
             SDL_RenderDrawPoint(
                 renderer,
-                (int)p.pos.x,
-                (int)p.pos.y);
+                particleScreen.x,
+                particleScreen.y,
         }
 
         // =============================================
