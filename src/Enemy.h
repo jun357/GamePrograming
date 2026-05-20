@@ -90,7 +90,7 @@ struct Enemy
 
 void UpdateEnemies(
     std::vector<Enemy>& enemies,
-    SDL_Rect& player,
+    const SDL_Rect& player,
     const std::vector<Wall>& walls,
     bool alarmActive,
     bool& alarmTriggered,
