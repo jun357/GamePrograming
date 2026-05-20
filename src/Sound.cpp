@@ -44,6 +44,13 @@ void EmitSound(
 
 void GeneratePorousWall(Wall& w, float solidProbability) { w.cells.resize( w.gridWidth * w.gridHeight); for (int y = 0; y < w.gridHeight; y++) { for (int x = 0; x < w.gridWidth; x++) { auto& cell = GetCell(w, x, y); cell.solid = RandomFloat() < solidProbability; } } }
 void EnsureWallGenerated(Wall& w) { if (!w.generated) { GeneratePorousWall(w, 0.65f); w.generated = true; } } 
+void PrepareSoundWalls(std::vector<Wall>& walls)
+{
+    for (auto& w : walls)
+    {
+        EnsureWallGenerated(w);
+    }
+}
 
 // =====================================================
 // 셀 충돌
@@ -52,30 +59,34 @@ void EnsureWallGenerated(Wall& w) { if (!w.generated) { GeneratePorousWall(w, 0.
 static void ResolveCellCollision(
     const SoundParticle& in,
     SoundParticle& out,
-    Wall& w)
+    const Wall& w)
 {
     SDL_Rect rect = w.rect;
+    Vec2 pos = out.pos;
 
     // =============================================
     // 벽 영역 밖
     // =============================================
 
-    if (in.pos.x < rect.x ||
-        in.pos.y < rect.y ||
-        in.pos.x >= rect.x + rect.w ||
-        in.pos.y >= rect.y + rect.h)
+    if (pos.x < rect.x ||
+        pos.y < rect.y ||
+        pos.x >= rect.x + rect.w ||
+        pos.y >= rect.y + rect.h)
     {
         return;
     }
 
-    EnsureWallGenerated(w);
+    if (!w.generated || w.cells.empty() || w.cellSize <= 0)
+    {
+        return;
+    }
 
     // =============================================
     // 셀 좌표
     // =============================================
 
-    int gx = (int)(in.pos.x - rect.x) / w.cellSize;
-    int gy = (int)(in.pos.y - rect.y) / w.cellSize;
+    int gx = (int)(pos.x - rect.x) / w.cellSize;
+    int gy = (int)(pos.y - rect.y) / w.cellSize;
 
     if (gx < 0 || gy < 0 ||
         gx >= w.gridWidth ||
@@ -98,7 +109,7 @@ static void ResolveCellCollision(
     float cx = rect.x + gx * w.cellSize + w.cellSize * 0.5f;
     float cy = rect.y + gy * w.cellSize + w.cellSize * 0.5f;
 
-    Vec2 delta = { in.pos.x - cx, in.pos.y - cy };
+    Vec2 delta = { pos.x - cx, pos.y - cy };
 
     float half = w.cellSize * 0.5f;
 
@@ -129,11 +140,17 @@ static void ResolveCellCollision(
     }
 
     // =============================================
-    // 완전 탄성 반사
+    // 반발계수를 적용한 반사
     // =============================================
 
-    temp.vel = Reflect(in.vel, normal);
-
+    float vn = temp.vel.x * normal.x + temp.vel.y * normal.y;
+    if (vn < 0.0f)
+    {
+        float e = cell.restitution;
+        temp.vel.x -= (1.0f + e) * vn * normal.x;
+        temp.vel.y -= (1.0f + e) * vn * normal.y;
+    }
+    
     // =============================================
     // roughness scattering
     // =============================================
