@@ -68,10 +68,10 @@ namespace
         enemy.searchDuration = 2.0f;
         enemy.hearingThreshold = 4.0f;
         enemy.attackCooldown = 0.0f;
-        enemy.attackInterval = 1.0f;
-        enemy.firstShotDelay = 0.5f;
+        enemy.attackInterval = 2.2f;
+        enemy.firstShotDelay = 0.6f;
         enemy.attackRange = 240.0f;
-        enemy.attackDamage = 10;
+        enemy.attackDamage = 20;
     }
     void ApplySentryDefaults(Enemy& enemy)
     {
@@ -90,10 +90,10 @@ namespace
         enemy.headSweepSpeed = 0.6f;
         enemy.headSweepDirection = 1;
         enemy.attackCooldown = 0.0f;
-        enemy.attackInterval = 1.0f;
-        enemy.firstShotDelay = 0.5f;
+        enemy.attackInterval = 2.2f;
+        enemy.firstShotDelay = 0.6f;
         enemy.attackRange = 240.0f;
-        enemy.attackDamage = 10;
+        enemy.attackDamage = 20;
     }
     void ApplyOfficerDefaults(Enemy& enemy)
     {
@@ -113,9 +113,9 @@ namespace
         enemy.headSweepDirection = 1;
         enemy.attackCooldown = 0.0f;
         enemy.attackInterval = 0.7f;
-        enemy.firstShotDelay = 0.0f;
-        enemy.attackRange = 240.0f;
-        enemy.attackDamage = 20;
+        enemy.firstShotDelay = 0.25f;
+        enemy.attackRange = 200.0f;
+        enemy.attackDamage = 10;
     }
 }
 
@@ -531,7 +531,7 @@ static float GetInitialAttackDelay(
 
     if (alarmActive)
     {
-        return 0.0f;
+        return 0.25f;
     }
 
     return enemy.firstShotDelay;
