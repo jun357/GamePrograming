@@ -31,7 +31,7 @@ struct HearingResult
     float energy = 0.0f;
     Vec2 noisePos = {0.0f, 0.0f};
     bool heard = false;
-}
+};
 
 void EmitSound(
     std::vector<SoundParticle>& particles,
