@@ -1,4 +1,5 @@
 #include "Enemy.h"
+#include "Camera.h"
 
 #include <algorithm>
 #include <cmath>
@@ -809,7 +810,8 @@ const char* GetEnemyStateName(EnemyState state)
 void DrawFOV(
     SDL_Renderer* renderer,
     Enemy& enemy,
-    std::vector<Wall>& walls)
+    std::vector<Wall>& walls,
+    const Camera2D& camera)
 {
     int rays = 120;
 
@@ -875,11 +877,15 @@ void DrawFOV(
             (int)(center.y + dy * rayLength)
         };
 
+        Vec2 centerWorld = { (float)center.x, (float)center.y };
+        Vec2 endWorld = { (float)end.x, (float)end.y };
+        SDL_Point centerScreen = camera.WorldToScreenPoint(centerWorld);
+        SDL_Point endScreen = camera.WorldToScreenPoint(endWorld);
         SDL_RenderDrawLine(
             renderer,
-            center.x,
-            center.y,
-            end.x,
-            end.y);
+            centerScreen.x,
+            centerScreen.y,
+            endScreen.x,
+            endScreen.y);
     }
 }
