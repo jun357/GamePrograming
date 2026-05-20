@@ -644,7 +644,7 @@ static void UpdateReturn(
 
 static void UpdateAlert(
     Enemy& enemy,
-    SDL_Rect& player,
+    const SDL_Rect& player,
     const std::vector<Wall>& walls,
     int& playerHP,
     float dt)
