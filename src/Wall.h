@@ -48,7 +48,7 @@ inline WallCell& GetCell(
 inline const WallCell& GetCell(
     const Wall& w,
     int x,
-    iny y)
+    int y)
 {
     return w.cells[y * w.gridWidth + x];
 }
