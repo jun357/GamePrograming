@@ -5,6 +5,7 @@
 #include <vector>
 #include <cmath>
 #include <thread>
+#include <functional>
 
 #include "Globals.h"
 #include "Math.h"
