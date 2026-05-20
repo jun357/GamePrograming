@@ -8,6 +8,8 @@
 
 #include "Wall.h"
 
+struct Camera2D;
+
 enum class EnemyKind
 {
     PatrolGuard,
@@ -100,7 +102,8 @@ void UpdateEnemies(
 void DrawFOV(
     SDL_Renderer* renderer,
     Enemy& enemy,
-    std::vector<Wall>& walls);
+    std::vector<Wall>& walls,
+    const Camera2D& camera);
 
 void RequestEnemyInvestigate(
     Enemy& enemy,
