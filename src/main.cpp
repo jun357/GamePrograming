@@ -592,7 +592,7 @@ int main(int argc, char* args[])
             SDL_RenderDrawPoint(
                 renderer,
                 particleScreen.x,
-                particleScreen.y,
+                particleScreen.y);
         }
 
         // =============================================
