@@ -13,29 +13,23 @@ void EmitSound(
     std::vector<SoundParticle>& particles,
     Vec2 origin,
     int count,
-    float speed)
+    float speed,
+    float loudness,
+    float life)
 {
-    for (int i = 0; i < count; i++)
+    for (int i = 0; i < count; ++i)
     {
-        float angle =
-            RandomFloat() * 6.283185f;
-
-        Vec2 dir =
-        {
-            cosf(angle),
-            sinf(angle)
-        };
+        float angle = RandomFloat() * 6.28318530718f;
+        Vec2 dir = { cosf(angle), sinf(angle) };
 
         SoundParticle p;
-
         p.pos = origin;
-
+        p.source = origin;
         p.vel = dir * speed;
-
         p.radius = 2.0f;
-
         p.mass = 1.0f;
-
+        p.loudness = loudness;
+        p.life = life;
         p.alive = true;
 
         particles.push_back(p);
@@ -235,6 +229,11 @@ void UpdateSoundParticles(
 {
     write = read; // 기본 복사 (중요)
 
+    for (auto& result : hearingBuffer)
+    {
+        result = HearingResult{};
+    }
+
     const int substeps = 4;
     float stepDt = dt / substeps;
 
@@ -297,29 +296,48 @@ void UpdateSoundParticles(
         // 적 hearing
         // =============================================
 
-        for (size_t i = 0; i < enemies.size(); ++i)
+        for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
         {
-            const auto& enemy = enemies[i];
-            if (!enemy.alive) continue;
-
-            float ex = enemy.rect.x + enemy.rect.w * 0.5f;
-            float ey = enemy.rect.y + enemy.rect.h * 0.5f;
-
-            for (const auto& p : read)
+            const EnemyAudioSnapshot& enemy = enemies[i];
+            if (!enemy.alive)
             {
-                if (!p.alive) continue;
+                continue;
+            }
 
-                float dx = ex - p.pos.x;
-                float dy = ey - p.pos.y;
-                float distSq = dx * dx + dy * dy;
+            Vec2 enemyCenter =
+            {
+                enemy.rect.x + enemy.rect.w * 0.5f,
+                enemy.rect.y + enemy.rect.h * 0.5f
+            }
 
-                float hearRadius = 32.0f;
-
-                if (distSq < hearRadius * hearRadius)
+            for (const auto& particle : write)
+            {
+                if (!particle.alive)
                 {
-                    hearingBuffer[i].energy += 1.0f;
-                    hearingBuffer[i].noisePos = p.pos;
-                    hearingBuffer[i].heard = true;
+                    continue;
+                }
+
+                float hearRadius = 34.0f + particle.loudness * 10.0f;
+                float distSq = DistanceSq(enemyCenter, particle.pos);
+                float hearRadiusSq = hearRadius * hearRadius;
+
+                if (distSq >= hearRadiusSq)
+                {
+                    continue;
+                }
+
+                float dist = sqrtf(distSq);
+                float attenuation = 1.0f - ClampFloat(dist / hearRadius, 0.0f, 1.0f);
+                float energy = particle.loudness * attenuation;
+
+                HearingResult& result = hearingBuffer[i];
+                result.energy += energy;
+                result.heard = true;
+
+                if (energy > result.strongestEnergy)
+                {
+                    result.strongestEnergy = energy;
+                    result.noisePos = particle.source;
                 }
             }
         }
