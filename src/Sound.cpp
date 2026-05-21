@@ -249,12 +249,7 @@ void UpdateSoundParticles(
                 continue;
             }
 
-            write[i].pos += write[i].vel * stepDt;
-
-            // =====================================
-            // 🔥 고정 확률 소멸
-            // =====================================
-            
+            write[i].pos += write[i].vel * stepDt;         
             write[i].life -= stepDt;
             if (write[i].life <= 0.0f)
             {
