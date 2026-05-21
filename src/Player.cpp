@@ -31,39 +31,61 @@ MoveMode GetMoveMode(const Uint8* keystate)
     return WALK;
 }
 
+static bool RectIntersectsAnyWall(
+    const SDL_Rect& rect,
+    const std::vector<Wall>& walls)
+{
+    for (const auto& wall : walls)
+    {
+        if (SDL_HasIntersection(&rect, &wall.rect))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool MovePlayerWithCollisionResult(
+    SDL_Rect& player,
+    float dx,
+    float dy,
+    const std::vector<Wall>& walls)
+{
+    bool collided = false;
+
+    SDL_Rect next = player;
+    next.x += static_cast<int>(dx);
+
+    if (!RectIntersectsAnyWall(next, walls))
+    {
+        player.x = next.x;
+    }
+    else
+    {
+        collided = true;
+    }
+
+    next = player;
+    next.y += static_cast<int>(dy);
+
+    if (!RectIntersectsAnyWall(next, walls))
+    {
+        player.y = next.y;
+    }
+    else
+    {
+        collided = true;
+    }
+
+    return collided;
+}
+
 void MovePlayer(
     SDL_Rect& player,
     float dx,
     float dy,
     const std::vector<Wall>& walls)
 {
-    SDL_Rect next = player;
-
-    next.x += (int)dx;
-
-    for (auto& w : walls)
-    {
-        if (SDL_HasIntersection(&next, &w.rect))
-        {
-            dx = 0;
-            break;
-        }
-    }
-
-    player.x += (int)dx;
-
-    next = player;
-
-    next.y += (int)dy;
-
-    for (auto& w : walls)
-    {
-        if (SDL_HasIntersection(&next, &w.rect))
-        {
-            dy = 0;
-            break;
-        }
-    }
-
-    player.y += (int)dy;
+    (void)MovePlayerWithCollisionResult(player, dx, dy, walls);
 }
