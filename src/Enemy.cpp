@@ -281,43 +281,68 @@ static bool RectIntersectsAnyWall(
     return false;
 }
 
-static void FacePoint(
-    Enemy& enemy,
-    Vec2 point)
+static void FacePoint(Enemy& enemy, Vec2 point)
 {
     Vec2 toTarget = point - enemy.pos;
-
-    if (Length(toTarget) <= 0.001f)
+    if (LengthSq(toTarget) <= 0.0001f)
+    {
         return;
+    }
 
-    enemy.angle = atan2f(toTarget.y, toTarget.x);
+    enemy.angle = WrapAngle(atan2f(toTarget.y, toTarget.x));
 }
 
-static bool ShouldKeepFacingFixedWhileInvestigating(
-    const Enemy& enemy)
+static bool ShouldKeepFacingFixedWhileInvestigating(const Enemy& enemy)
 {
-    return enemy.kind == EnemyKind::Sentry || enemy.kind == EnemyKind::Officer;
+    return false;
 }
 
-static void ChangeEnemyState(
-    Enemy& enemy,
-    EnemyState newState)
+static void ChangeEnemyState(Enemy& enemy, EnemyState newState)
 {
     if (enemy.state == newState)
+    {
         return;
+    }
 
     enemy.state = newState;
     enemy.stateTimer = 0.0f;
-    
-    if (newState == EnemyState::Investigate &&
-        ShouldKeepFacingFixedWhileInvestigating(enemy))
-    {
-        FacePoint(enemy, enemy.investigateTarget);
-    }
+    enemy.stuckTimer = 0.0f;
+    enemy.angle = WrapAngle(enemy.angle);
 
-    if (newState == EnemyState::Search)
+    switch (newState)
     {
-        enemy.searchTimer = enemy.searchDuration;
+    case EnemyState::Patrol:
+        enemy.hasPendingNoise = false;
+        enemy.pendingNoiseEnergy = 0.0f;
+        enemy.hearingEnergy = 0.0f;
+        break;
+
+    case EnemyState::Investigate:
+        FacePoint(enemy, enemy.investigateTarget);
+        break;
+
+    case EnemyState::Search:
+        enemy.searchTimer = enemy.heightenedAlert
+            ? enemy.searchDuration * 1.5f
+            : enemy.searchDuration;
+        enemy.searchBaseAngle = enemy.angle;
+        break;
+
+    case EnemyState::Return:
+        enemy.returnTarget = GetReturnTarget(enemy);
+        FacePoint(enemy, enemy.returnTarget);
+        break;
+
+    case EnemyState::Alert:
+        enemy.heightenedAlert = true;
+        enemy.alertLostTimer = 0.0f;
+        enemy.alertSearchBaseAngle = enemy.angle;
+        enemy.hasPendingNoise = false;
+        break;
+
+    case EnemyState::Dead:
+        enemy.alerted = false;
+        break;
     }
 }
 
@@ -354,7 +379,7 @@ static void UpdateHeadSweep(
     }
 
     enemy.angle =
-        enemy.homeAngle + enemy.headSweepOffset;
+        WrapAngle(enemy.homeAngle + enemy.headSweepOffset);
 }
 
 // =====================================================
@@ -400,18 +425,23 @@ static bool MoveEnemyToward(
     Vec2 toTarget = target - enemy.pos;
     float dist = Length(toTarget);
 
-    const float arriveDistance = 3.0f;
+    const float ARRIVE_DISTANCE = 3.0f;
 
-    if (dist <= arriveDistance)
+    if (dist <= ARRIVE_DISTANCE)
     {
         enemy.pos = target;
         SyncEnemyRectFromPos(enemy);
+        enemy.stuckTimer = 0.0f;
         return true;
     }
 
     if (enemy.moveSpeed <= 0.0f)
+    {
+        enemy.stuckTimer += dt;
         return false;
+    }
 
+    Vec2 before = enemy.pos;
     Vec2 dir = Normalize(toTarget);
 
     if (updateFacing)
@@ -420,10 +450,18 @@ static bool MoveEnemyToward(
     }
 
     float step = std::min(enemy.moveSpeed * dt, dist);
-
     MoveEnemyBy(enemy, dir * step, walls);
 
-    return Length(target - enemy.pos) <= arriveDistance;
+    if (DistanceSq(before, enemy.pos) <= 0.01f)
+    {
+        enemy.stuckTimer += dt;
+    }
+    else
+    {
+        enemy.stuckTimer = 0.0f;
+    }
+
+    return DistanceSq(target, enemy.pos) <= ARRIVE_DISTANCE * ARRIVE_DISTANCE;
 }
 
 static Vec2 GetReturnTarget(const Enemy& enemy)
@@ -551,95 +589,154 @@ static void ApplyEnemyGunHit(
     enemy.attackCooldown = enemy.attackInterval;
 }
 
+static void ConsumePendingNoise(Enemy& enemy, bool alarmActive)
+{
+    if (!enemy.hasPendingNoise)
+    {
+        return;
+    }
+
+    if (alarmActive ||
+        enemy.state == EnemyState::Dead ||
+        enemy.state == EnemyState::Alert)
+    {
+        enemy.hasPendingNoise = false;
+        enemy.pendingNoiseEnergy = 0.0f;
+        return;
+    }
+
+    enemy.investigateTarget = enemy.pendingNoisePos;
+    enemy.lastNoisePos = enemy.pendingNoisePos;
+    enemy.hearingEnergy = 0.0f;
+    enemy.pendingNoiseEnergy = 0.0f;
+    enemy.hasPendingNoise = false;
+
+    ChangeEnemyState(enemy, EnemyState::Investigate);
+}
+
 // =====================================================
 // 상태별 업데이트
 // =====================================================
 
-static void UpdatePatrol(
-    Enemy& enemy,
-    const std::vector<Wall>& walls,
-    float dt)
+static void UpdatePatrol(Enemy& enemy, const std::vector<Wall>& walls, float dt)
 {
+    const float ARRIVE_DISTANCE = 3.0f;
+
     if (enemy.kind == EnemyKind::PatrolGuard)
     {
         if (enemy.patrolPoints.empty())
         {
             return;
         }
-        if (enemy.patrolIndex < 0 || enemy.patrolIndex >= (int)enemy.patrolPoints.size())
+
+        if (enemy.patrolIndex < 0 ||
+            enemy.patrolIndex >= static_cast<int>(enemy.patrolPoints.size()))
         {
             enemy.patrolIndex = 0;
         }
+
         Vec2 target = enemy.patrolPoints[enemy.patrolIndex];
-        bool arrived = MoveEnemyToward(enemy, target, walls, dt);
+        bool arrived = MoveEnemyToward(enemy, target, walls, dt, true);
+
         if (arrived)
         {
             enemy.patrolIndex =
                 (enemy.patrolIndex + 1) %
-                (int)enemy.patrolPoints.size();
+                static_cast<int>(enemy.patrolPoints.size());
+        }
+
+        return;
+    }
+
+    // 보초/간부가 Patrol 상태인데 원래 위치가 아니면 우선 home으로 복귀시킨다.
+    if (DistanceSq(enemy.pos, enemy.homePos) >
+        ARRIVE_DISTANCE * ARRIVE_DISTANCE)
+    {
+        bool arrived = MoveEnemyToward(enemy, enemy.homePos, walls, dt, true);
+        if (arrived)
+        {
+            enemy.angle = enemy.homeAngle;
+            enemy.headSweepOffset = 0.0f;
+            enemy.stuckTimer = 0.0f;
         }
         return;
     }
 
-    if (enemy.kind == EnemyKind::Sentry || enemy.kind == EnemyKind::Officer)
-    {
-        if (enemy.useHeadSweep)
-        {
-            UpdateHeadSweep(enemy, dt);
-        }
-        return;
-    }
+    UpdateHeadSweep(enemy, dt);
 }
 
-static void UpdateInvestigate(
-    Enemy& enemy,
-    const std::vector<Wall>& walls,
-    float dt)
+static void UpdateInvestigate(Enemy& enemy, const std::vector<Wall>& walls, float dt)
 {
-    bool keepFacingFixed = ShouldKeepFacingFixedWhileInvestigating(enemy);
-    bool arrived = MoveEnemyToward(enemy, enemy.investigateTarget, walls, dt, !keepFacingFixed);
+    bool arrived = MoveEnemyToward(
+        enemy,
+        enemy.investigateTarget,
+        walls,
+        dt,
+        true);
 
-    if (arrived)
+    if (arrived || enemy.stateTimer >= enemy.investigateTimeout)
     {
         ChangeEnemyState(enemy, EnemyState::Search);
     }
 }
 
-static void UpdateSearch(
-    Enemy& enemy,
-    float dt)
+static void UpdateSearch(Enemy& enemy, float dt)
 {
     enemy.searchTimer -= dt;
-    // 주변을 살피는 동작
-    if (enemy.rotateSpeed != 0.0f)
-    {
-        enemy.angle += enemy.rotateSpeed * dt * 90.0f;
-    }
-    else
-    {
-        enemy.angle += 1.5f * dt;
-    }
+
+    const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+
+    const float sweepRange = enemy.heightenedAlert
+        ? 90.0f * DEG_TO_RAD
+        : 45.0f * DEG_TO_RAD;
+
+    const float sweepSpeed = enemy.heightenedAlert ? 4.0f : 3.0f;
+
+    float sweep = sinf(enemy.stateTimer * sweepSpeed) * sweepRange;
+    enemy.angle = WrapAngle(enemy.searchBaseAngle + sweep);
+
     if (enemy.searchTimer <= 0.0f)
     {
         ChangeEnemyState(enemy, EnemyState::Return);
     }
 }
 
-static void UpdateReturn(
-    Enemy& enemy,
-    const std::vector<Wall>& walls,
-    float dt)
+static void SnapToReturnTargetAndPatrol(Enemy& enemy)
 {
-    Vec2 returnTarget = GetReturnTarget(enemy);
-    bool arrived = MoveEnemyToward(enemy, returnTarget, walls, dt);
+    enemy.pos = enemy.returnTarget;
+    SyncEnemyRectFromPos(enemy);
+
+    if (enemy.patrolPoints.empty())
+    {
+        enemy.pos = enemy.homePos;
+        SyncEnemyRectFromPos(enemy);
+        enemy.angle = enemy.homeAngle;
+        enemy.headSweepOffset = 0.0f;
+    }
+
+    ChangeEnemyState(enemy, EnemyState::Patrol);
+}
+static void UpdateReturn(Enemy& enemy, const std::vector<Wall>& walls, float dt)
+{
+    bool arrived = MoveEnemyToward(enemy, enemy.returnTarget, walls, dt, true);
 
     if (arrived)
     {
         if (enemy.patrolPoints.empty())
         {
+            enemy.pos = enemy.homePos;
+            SyncEnemyRectFromPos(enemy);
             enemy.angle = enemy.homeAngle;
+            enemy.headSweepOffset = 0.0f;
         }
+
         ChangeEnemyState(enemy, EnemyState::Patrol);
+        return;
+    }
+
+    if (enemy.stateTimer >= enemy.returnTimeout || enemy.stuckTimer >= 1.25f)
+    {
+        SnapToReturnTargetAndPatrol(enemy);
     }
 }
 
@@ -647,47 +744,56 @@ static void UpdateAlert(
     Enemy& enemy,
     const SDL_Rect& player,
     const std::vector<Wall>& walls,
+    bool alarmActive,
     int& playerHP,
     float dt)
 {
-    Vec2 playerCenter =
-        GetPlayerCenter(player);
-
-    FacePoint(enemy, playerCenter);
+    const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+    const float ARRIVE_DISTANCE = 3.0f;
 
     if (enemy.attackCooldown > 0.0f)
     {
         enemy.attackCooldown -= dt;
     }
 
-    bool canSee =
-        CanSeePlayer(enemy, player, walls);
+    bool canSee = CanSeePlayer(enemy, player, walls);
+    Vec2 playerCenter = GetPlayerCenter(player);
 
-    if (!canSee)
+    if (canSee)
     {
-        enemy.investigateTarget =
-            enemy.lastKnownPlayerPos;
+        enemy.alertLostTimer = 0.0f;
+        enemy.lastKnownPlayerPos = playerCenter;
+        enemy.alertSearchBaseAngle = enemy.angle;
 
-        ChangeEnemyState(
-            enemy,
-            EnemyState::Investigate);
+        FacePoint(enemy, playerCenter);
+
+        if (IsPlayerInAttackRange(enemy, player) &&
+            enemy.attackCooldown <= 0.0f)
+        {
+            ApplyEnemyGunHit(enemy, playerHP);
+        }
 
         return;
     }
 
-    enemy.lastKnownPlayerPos =
-        playerCenter;
+    enemy.alertLostTimer += dt;
 
-    if (!IsPlayerInAttackRange(enemy, player))
+    if (DistanceSq(enemy.pos, enemy.lastKnownPlayerPos) >
+        ARRIVE_DISTANCE * ARRIVE_DISTANCE)
     {
+        MoveEnemyToward(enemy, enemy.lastKnownPlayerPos, walls, dt, true);
         return;
     }
 
-    if (enemy.attackCooldown <= 0.0f)
+    // 마지막 목격 지점에서 강한 수색
+    const float sweepRange = 100.0f * DEG_TO_RAD;
+    float sweep = sinf(enemy.alertLostTimer * 4.5f) * sweepRange;
+    enemy.angle = WrapAngle(enemy.alertSearchBaseAngle + sweep);
+
+    // 전역 경보가 아닌 경우에만 일정 시간 뒤 Search로 완화
+    if (!alarmActive && enemy.alertLostTimer >= enemy.alertSearchDuration)
     {
-        ApplyEnemyGunHit(
-            enemy,
-            playerHP);
+        ChangeEnemyState(enemy, EnemyState::Search);
     }
 }
 
@@ -708,79 +814,126 @@ void UpdateEnemies(
     {
         EnsureEnemyInitialized(enemy);
         enemy.stateTimer += dt;
-        // Sound.cpp가 enemy.hearingEnergy를 직접 올리고 있으므로 디버그 표시용으로만 남겨둠
-        enemy.hearingEnergy *= expf(-2.0f * dt);
+        enemy.angle = WrapAngle(enemy.angle);
+
         if (enemy.state == EnemyState::Dead)
         {
             enemy.alerted = false;
             continue;
         }
-        bool canSeePlayer = CanSeePlayer(enemy, player, walls);
-        if (canSeePlayer)
+
+        if (alarmActive)
+        {
+            enemy.heightenedAlert = true;
+        }
+
+        enemy.hearingEnergy *= expf(-2.0f * dt);
+
+        bool canSeePlayerNow = CanSeePlayer(enemy, player, walls);
+
+        if (canSeePlayerNow)
         {
             enemy.lastKnownPlayerPos = GetPlayerCenter(player);
-            bool wasAlreadyAlert = enemy.state == EnemyState::Alert;
 
-            if (!wasAlreadyAlert)
+            if (enemy.state != EnemyState::Alert)
             {
                 ChangeEnemyState(enemy, EnemyState::Alert);
                 enemy.attackCooldown = GetInitialAttackDelay(enemy, alarmActive);
             }
+
             alarmTriggered = true;
         }
-        // 상태별 행동
+        else
+        {
+            ConsumePendingNoise(enemy, alarmActive);
+        }
+
         switch (enemy.state)
         {
         case EnemyState::Patrol:
             UpdatePatrol(enemy, walls, dt);
             break;
+
         case EnemyState::Investigate:
             UpdateInvestigate(enemy, walls, dt);
             break;
+
         case EnemyState::Search:
             UpdateSearch(enemy, dt);
             break;
+
         case EnemyState::Return:
             UpdateReturn(enemy, walls, dt);
             break;
+
         case EnemyState::Alert:
-            UpdateAlert(enemy, player, walls, playerHP, dt);
+            UpdateAlert(enemy, player, walls, alarmActive, playerHP, dt);
             break;
+
         case EnemyState::Dead:
             break;
         }
-        enemy.alerted = IsSuspiciousState(enemy.state) || enemy.hearingEnergy >= enemy.hearingThreshold;
+
+        enemy.angle = WrapAngle(enemy.angle);
+
+        enemy.alerted =
+            enemy.heightenedAlert ||
+            IsSuspiciousState(enemy.state) ||
+            enemy.hearingEnergy >= enemy.hearingThreshold;
     }
 }
 
 // =====================================================
-// 소음 연결용 (임시)
+// 소음 연결
 // =====================================================
 
-void RequestEnemyInvestigate(
-    Enemy& enemy,
-    Vec2 targetPos)
+void RequestEnemyInvestigate(Enemy& enemy, Vec2 targetPos)
 {
-    if (enemy.state == EnemyState::Dead)
+    if (enemy.state == EnemyState::Dead ||
+        enemy.state == EnemyState::Alert)
+    {
         return;
-    if (enemy.state == EnemyState::Alert)
-        return;
+    }
+
     enemy.investigateTarget = targetPos;
+    enemy.lastNoisePos = targetPos;
+    enemy.hasPendingNoise = false;
+    enemy.hearingEnergy = 0.0f;
+
     ChangeEnemyState(enemy, EnemyState::Investigate);
 }
 
 void NotifyEnemyOfNoise(
     Enemy& enemy,
     Vec2 noisePos,
-    float energy)
+    float energy,
+    bool alarmActive)
 {
+    if (enemy.state == EnemyState::Dead)
+    {
+        return;
+    }
+
+    if (alarmActive || enemy.state == EnemyState::Alert)
+    {
+        enemy.hasPendingNoise = false;
+        return;
+    }
+
     enemy.lastNoisePos = noisePos;
     enemy.hearingEnergy += energy;
 
-    // if (enemy.hearingEnergy >= enemy.hearingThreshold)
-    // {
-    //    RequestEnemyInvestigate(enemy, noisePos);
-    // }
+    if (enemy.hearingEnergy >= enemy.hearingThreshold)
+    {
+        enemy.pendingNoisePos = noisePos;
+        enemy.pendingNoiseEnergy = enemy.hearingEnergy;
+        enemy.hasPendingNoise = true;
+    }
+}
+
+void NotifyEnemyOfNoise(Enemy& enemy, Vec2 noisePos, float energy)
+{
+    NotifyEnemyOfNoise(enemy, noisePos, energy, false);
 }
 
 const char* GetEnemyStateName(EnemyState state)
