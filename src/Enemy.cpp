@@ -297,6 +297,20 @@ static bool ShouldKeepFacingFixedWhileInvestigating(const Enemy& enemy)
     return false;
 }
 
+static Vec2 GetReturnTarget(const Enemy& enemy)
+{
+    if (!enemy.patrolPoints.empty())
+    {
+        int index = enemy.patrolIndex;
+        if (index < 0 || index >= (int)enemy.patrolPoints.size())
+        {
+            index = 0;
+        }
+        return enemy.patrolPoints[index];
+    }
+    return enemy.homePos;
+}
+
 static void ChangeEnemyState(Enemy& enemy, EnemyState newState)
 {
     if (enemy.state == newState)
@@ -462,20 +476,6 @@ static bool MoveEnemyToward(
     }
 
     return DistanceSq(target, enemy.pos) <= ARRIVE_DISTANCE * ARRIVE_DISTANCE;
-}
-
-static Vec2 GetReturnTarget(const Enemy& enemy)
-{
-    if (!enemy.patrolPoints.empty())
-    {
-        int index = enemy.patrolIndex;
-        if (index < 0 || index >= (int)enemy.patrolPoints.size())
-        {
-            index = 0;
-        }
-        return enemy.patrolPoints[index];
-    }
-    return enemy.homePos;
 }
 
 // =====================================================
