@@ -44,6 +44,13 @@ void EmitSound(
 
 void GeneratePorousWall(Wall& w, float solidProbability) { w.cells.resize( w.gridWidth * w.gridHeight); for (int y = 0; y < w.gridHeight; y++) { for (int x = 0; x < w.gridWidth; x++) { auto& cell = GetCell(w, x, y); cell.solid = RandomFloat() < solidProbability; } } }
 void EnsureWallGenerated(Wall& w) { if (!w.generated) { GeneratePorousWall(w, 0.65f); w.generated = true; } } 
+void PrepareSoundWalls(std::vector<Wall>& walls)
+{
+    for (auto& w : walls)
+    {
+        EnsureWallGenerated(w);
+    }
+}
 
 // =====================================================
 // 셀 충돌
@@ -52,30 +59,34 @@ void EnsureWallGenerated(Wall& w) { if (!w.generated) { GeneratePorousWall(w, 0.
 static void ResolveCellCollision(
     const SoundParticle& in,
     SoundParticle& out,
-    Wall& w)
+    const Wall& w)
 {
     SDL_Rect rect = w.rect;
+    Vec2 pos = out.pos;
 
     // =============================================
     // 벽 영역 밖
     // =============================================
 
-    if (in.pos.x < rect.x ||
-        in.pos.y < rect.y ||
-        in.pos.x >= rect.x + rect.w ||
-        in.pos.y >= rect.y + rect.h)
+    if (pos.x < rect.x ||
+        pos.y < rect.y ||
+        pos.x >= rect.x + rect.w ||
+        pos.y >= rect.y + rect.h)
     {
         return;
     }
 
-    EnsureWallGenerated(w);
+    if (!w.generated || w.cells.empty() || w.cellSize <= 0)
+    {
+        return;
+    }
 
     // =============================================
     // 셀 좌표
     // =============================================
 
-    int gx = (int)(in.pos.x - rect.x) / w.cellSize;
-    int gy = (int)(in.pos.y - rect.y) / w.cellSize;
+    int gx = (int)(pos.x - rect.x) / w.cellSize;
+    int gy = (int)(pos.y - rect.y) / w.cellSize;
 
     if (gx < 0 || gy < 0 ||
         gx >= w.gridWidth ||
@@ -98,7 +109,7 @@ static void ResolveCellCollision(
     float cx = rect.x + gx * w.cellSize + w.cellSize * 0.5f;
     float cy = rect.y + gy * w.cellSize + w.cellSize * 0.5f;
 
-    Vec2 delta = { in.pos.x - cx, in.pos.y - cy };
+    Vec2 delta = { pos.x - cx, pos.y - cy };
 
     float half = w.cellSize * 0.5f;
 
@@ -129,11 +140,17 @@ static void ResolveCellCollision(
     }
 
     // =============================================
-    // 완전 탄성 반사
+    // 반발계수를 적용한 반사
     // =============================================
 
-    temp.vel = Reflect(in.vel, normal);
-
+    float vn = temp.vel.x * normal.x + temp.vel.y * normal.y;
+    if (vn < 0.0f)
+    {
+        float e = cell.restitution;
+        temp.vel.x -= (1.0f + e) * vn * normal.x;
+        temp.vel.y -= (1.0f + e) * vn * normal.y;
+    }
+    
     // =============================================
     // roughness scattering
     // =============================================
@@ -211,9 +228,9 @@ static void ResolveParticleCollision(
 void UpdateSoundParticles(
     const std::vector<SoundParticle>& read,
     std::vector<SoundParticle>& write,
-    const std::vector<Enemy>& enemies,
-    std::vector<float>& hearingBuffer,
-    std::vector<Wall>& walls,
+    const std::vector<EnemyAudioSnapshot>& enemies,
+    std::vector<HearingResult>& hearingBuffer,
+    const std::vector<Wall>& walls,
     float dt)
 {
     write = read; // 기본 복사 (중요)
@@ -226,8 +243,8 @@ void UpdateSoundParticles(
         // =========================================
         // 이동
         // =========================================
-
-        for (int i = 0; i < read.size(); i++)
+        
+        for (int i = 0; i < (int)read.size(); i++)
         {
             if (!read[i].alive) continue;
 
@@ -238,7 +255,6 @@ void UpdateSoundParticles(
             // =====================================
 
             const float deathRate = 0.8f; // 초당 확률
-
             if (RandomFloat() < deathRate * stepDt)
             {
                 write[i].alive = false;
@@ -250,11 +266,11 @@ void UpdateSoundParticles(
         // 셀 충돌
         // =========================================
 
-        for (int i = 0; i < read.size(); i++)
+        for (int i = 0; i < (int)read.size(); i++)
         {
             if (!read[i].alive) continue;
 
-            for (auto& w : walls)
+            for (const auto& w : walls)
             {
                 ResolveCellCollision(
                     read[i],
@@ -267,12 +283,14 @@ void UpdateSoundParticles(
         // 입자 충돌
         // =========================================
 
-        for (int i = 0; i < read.size(); i++)
-        for (int j = i + 1; j < read.size(); j++)
+        for (int i = 0; i < (int)read.size(); i++)
         {
-            ResolveParticleCollision(
-                read[i], read[j],
-                write[i], write[j]);
+            for (int j = i + 1; j < (int)read.size(); j++)
+            {
+                ResolveParticleCollision(
+                    read[i], read[j],
+                    write[i], write[j]);
+            }
         }
 
         // =============================================
@@ -281,33 +299,27 @@ void UpdateSoundParticles(
 
         for (size_t i = 0; i < enemies.size(); ++i)
         {
-            auto& enemy = enemies[i];
-            
-            float ex =
-                enemy.rect.x +
-                enemy.rect.w * 0.5f;
+            const auto& enemy = enemies[i];
+            if (!enemy.alive) continue;
 
-            float ey =
-                enemy.rect.y +
-                enemy.rect.h * 0.5f;
+            float ex = enemy.rect.x + enemy.rect.w * 0.5f;
+            float ey = enemy.rect.y + enemy.rect.h * 0.5f;
 
-            for (auto& p : read)
+            for (const auto& p : read)
             {
-                float dx =
-                    ex - p.pos.x;
+                if (!p.alive) continue;
 
-                float dy =
-                    ey - p.pos.y;
-
-                float distSq =
-                    dx * dx + dy * dy;
+                float dx = ex - p.pos.x;
+                float dy = ey - p.pos.y;
+                float distSq = dx * dx + dy * dy;
 
                 float hearRadius = 32.0f;
 
-                if (distSq <
-                    hearRadius * hearRadius)
+                if (distSq < hearRadius * hearRadius)
                 {
-                    hearingBuffer[i] += 1.0f;
+                    hearingBuffer[i].energy += 1.0f;
+                    hearingBuffer[i].noisePos = p.pos;
+                    hearingBuffer[i].heard = true;
                 }
             }
         }

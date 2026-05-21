@@ -44,3 +44,11 @@ inline WallCell& GetCell(
 {
     return w.cells[y * w.gridWidth + x];
 }
+
+inline const WallCell& GetCell(
+    const Wall& w,
+    int x,
+    int y)
+{
+    return w.cells[y * w.gridWidth + x];
+}

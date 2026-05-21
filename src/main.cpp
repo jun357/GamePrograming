@@ -5,6 +5,7 @@
 #include <vector>
 #include <cmath>
 #include <thread>
+#include <functional>
 
 #include "Globals.h"
 #include "Math.h"
@@ -12,6 +13,7 @@
 #include "Player.h"
 #include "Sound.h"
 #include "Wall.h"
+#include "Camera.h"
 
 // =====================================================
 // 게임 상태
@@ -183,11 +185,19 @@ int main(int argc, char* args[])
         }
     };
 
+    PrepareSoundWalls(walls);
+
     std::vector<Enemy> enemies;
 
     std::vector<SoundParticle> soundParticles;
 
     ResetStage(player, enemies);
+
+    // =================================================
+    // 카메라
+    // =================================================
+    Camera2D camera;
+    camera.zoom = 1.0f;
 
     // =================================================
     // 게임 상태
@@ -316,6 +326,8 @@ int main(int argc, char* args[])
                 player.y + player.h * 0.5f
             };
 
+            camera.FollowImmediate(playerCenter.x, playerCenter.y);
+
             if (isMoving)
             {
                 if (moveMode == RUN)
@@ -351,49 +363,82 @@ int main(int argc, char* args[])
             }
 
             bool alarmTriggered = false;
-
-            // 버퍼
-            std::vector<SoundParticle> particlesNext;
-            std::vector<float> hearingBuffer(
-            enemies.size(),
-            0.0f);
-
+            
             // =========================================
-            // 사운드 업데이트
+            // thread 출력/입력 버퍼 준비
+            // =========================================
+            
+            // soundThread가 계산한 다음 프레임 사운드 파티클을 받을 버퍼
+            std::vector<SoundParticle> particlesNext;
+            
+            // enemyThread가 player를 읽는 동안 main thread/player 원본과 꼬이지 않도록 snapshot 사용
+            SDL_Rect playerSnapshot = player;
+            
+            // soundThread는 enemies 원본을 직접 읽지 않고 대신 현재 프레임의 적 위치/생존 여부만 복사한 snapshot을 읽음
+            std::vector<EnemyAudioSnapshot> enemyAudioSnapshot;
+            enemyAudioSnapshot.reserve(enemies.size());
+            
+            for (const auto& enemy : enemies)
+            {
+                EnemyAudioSnapshot snapshot;
+                snapshot.rect = enemy.rect;
+                snapshot.alive = (enemy.state != EnemyState::Dead);
+                enemyAudioSnapshot.push_back(snapshot);
+            }
+            std::vector<HearingResult> hearingBuffer(enemyAudioSnapshot.size());
+            
+            // =========================================
+            // 사운드 물리 업데이트 thread
             // =========================================
             std::thread soundThread(
-            UpdateSoundParticles,
-            std::cref(soundParticles),
-            std::ref(particlesNext),
-            std::cref(enemies),
-            std::ref(hearingBuffer),
-            std::ref(walls),
-            dt);
-
+                UpdateSoundParticles,
+                std::cref(soundParticles),
+                std::ref(particlesNext),
+                std::cref(enemyAudioSnapshot),
+                std::ref(hearingBuffer),
+                std::cref(walls),
+                dt);
+            
             // =========================================
-            // 적 업데이트
+            // 적 AI 업데이트 thread
             // =========================================
             std::thread enemyThread(
-            UpdateEnemies,
-            std::ref(enemies),
-            std::ref(player),
-            std::cref(walls),
-            std::ref(alarmActive),
-            std::ref(alarmTriggered),
-            std::ref(playerHP),
-            dt);
-
+                UpdateEnemies,
+                std::ref(enemies),
+                std::cref(playerSnapshot),
+                std::cref(walls),
+                alarmActive,
+                std::ref(alarmTriggered),
+                std::ref(playerHP),
+                dt);
+            
+            // 두 thread가 끝날 때까지 main thread 대기
             soundThread.join();
             enemyThread.join();
             
+            // soundThread 결과를 실제 사운드 파티클 배열에 반영
             CleanUpParticles(soundParticles, particlesNext);
-
-            for (size_t i = 0; i < enemies.size(); ++i)
+            
+            // =========================================
+            // soundThread의 청각 결과를 main thread에서 enemies에 병합
+            // =========================================
+            for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
             {
-                enemies[i].hearingEnergy +=
-                    hearingBuffer[i];
+                const HearingResult& hearing = hearingBuffer[i];
+                if (!hearing.heard)
+                {
+                    continue;
+                }
+                enemies[i].hearingEnergy += hearing.energy;
+                enemies[i].lastNoisePos = hearing.noisePos;
+                
+                if (enemies[i].hearingEnergy >= enemies[i].hearingThreshold)
+                {
+                    RequestEnemyInvestigate(enemies[i], hearing.noisePos);
+                    enemies[i].hearingEnergy = 0.0f;
+                }
             }
-
+            
             if (alarmTriggered)
             {
                 alarmActive = true;
@@ -454,7 +499,8 @@ int main(int argc, char* args[])
             DrawFOV(
                 renderer,
                 enemy,
-                walls);
+                walls,
+                camera);
         }
 
         // =============================================
@@ -470,9 +516,8 @@ int main(int argc, char* args[])
 
         for (auto& w : walls)
         {
-            SDL_RenderFillRect(
-                renderer,
-                &w.rect);
+            SDL_Rect wallScreen = camera.WorldToScreenRect(w.rect);
+            SDL_RenderFillRect(renderer, &wallScreen);
         }
 
         // =============================================
@@ -486,9 +531,8 @@ int main(int argc, char* args[])
             0,
             255);
 
-        SDL_RenderDrawRect(
-            renderer,
-            &goal);
+        SDL_Rect goalScreen = camera.WorldToScreenRect(goal);
+        SDL_RenderDrawRect(renderer, &goalScreen);
 
         // =============================================
         // 플레이어
@@ -501,9 +545,8 @@ int main(int argc, char* args[])
             0,
             255);
 
-        SDL_RenderFillRect(
-            renderer,
-            &player);
+        SDL_Rect playerScreen = camera.WorldToScreenRect(player);
+        SDL_RenderFillRect(renderer, &playerScreen);
 
         // =============================================
         // 적
@@ -529,10 +572,8 @@ int main(int argc, char* args[])
                     0,
                     255);
             }
-
-            SDL_RenderFillRect(
-                renderer,
-                &enemy.rect);
+            SDL_Rect enemyScreen = camera.WorldToScreenRect(enemy.rect);
+            SDL_RenderFillRect(renderer, &enemyScreen);
         }
 
         // =============================================
@@ -548,10 +589,11 @@ int main(int argc, char* args[])
 
         for (auto& p : soundParticles)
         {
+            SDL_Point particleScreen = camera.WorldToScreenPoint(p.pos);
             SDL_RenderDrawPoint(
                 renderer,
-                (int)p.pos.x,
-                (int)p.pos.y);
+                particleScreen.x,
+                particleScreen.y);
         }
 
         // =============================================

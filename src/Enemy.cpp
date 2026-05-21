@@ -1,4 +1,5 @@
 #include "Enemy.h"
+#include "Camera.h"
 
 #include <algorithm>
 #include <cmath>
@@ -67,10 +68,10 @@ namespace
         enemy.searchDuration = 2.0f;
         enemy.hearingThreshold = 4.0f;
         enemy.attackCooldown = 0.0f;
-        enemy.attackInterval = 1.0f;
-        enemy.firstShotDelay = 0.5f;
+        enemy.attackInterval = 2.2f;
+        enemy.firstShotDelay = 0.6f;
         enemy.attackRange = 240.0f;
-        enemy.attackDamage = 10;
+        enemy.attackDamage = 20;
     }
     void ApplySentryDefaults(Enemy& enemy)
     {
@@ -89,10 +90,10 @@ namespace
         enemy.headSweepSpeed = 0.6f;
         enemy.headSweepDirection = 1;
         enemy.attackCooldown = 0.0f;
-        enemy.attackInterval = 1.0f;
-        enemy.firstShotDelay = 0.5f;
+        enemy.attackInterval = 2.2f;
+        enemy.firstShotDelay = 0.6f;
         enemy.attackRange = 240.0f;
-        enemy.attackDamage = 10;
+        enemy.attackDamage = 20;
     }
     void ApplyOfficerDefaults(Enemy& enemy)
     {
@@ -112,9 +113,9 @@ namespace
         enemy.headSweepDirection = 1;
         enemy.attackCooldown = 0.0f;
         enemy.attackInterval = 0.7f;
-        enemy.firstShotDelay = 0.0f;
-        enemy.attackRange = 240.0f;
-        enemy.attackDamage = 20;
+        enemy.firstShotDelay = 0.25f;
+        enemy.attackRange = 200.0f;
+        enemy.attackDamage = 10;
     }
 }
 
@@ -525,12 +526,12 @@ static float GetInitialAttackDelay(
 {
     if (enemy.kind == EnemyKind::Officer)
     {
-        return 0.0f;
+        return alarmActive ? 0.15f : 0.25f;
     }
 
     if (alarmActive)
     {
-        return 0.0f;
+        return 0.25f;
     }
 
     return enemy.firstShotDelay;
@@ -644,7 +645,7 @@ static void UpdateReturn(
 
 static void UpdateAlert(
     Enemy& enemy,
-    SDL_Rect& player,
+    const SDL_Rect& player,
     const std::vector<Wall>& walls,
     int& playerHP,
     float dt)
@@ -696,7 +697,7 @@ static void UpdateAlert(
 
 void UpdateEnemies(
     std::vector<Enemy>& enemies,
-    SDL_Rect& player,
+    const SDL_Rect& player,
     const std::vector<Wall>& walls,
     bool alarmActive,
     bool& alarmTriggered,
@@ -809,7 +810,8 @@ const char* GetEnemyStateName(EnemyState state)
 void DrawFOV(
     SDL_Renderer* renderer,
     Enemy& enemy,
-    std::vector<Wall>& walls)
+    std::vector<Wall>& walls,
+    const Camera2D& camera)
 {
     int rays = 120;
 
@@ -875,11 +877,15 @@ void DrawFOV(
             (int)(center.y + dy * rayLength)
         };
 
+        Vec2 centerWorld = { (float)center.x, (float)center.y };
+        Vec2 endWorld = { (float)end.x, (float)end.y };
+        SDL_Point centerScreen = camera.WorldToScreenPoint(centerWorld);
+        SDL_Point endScreen = camera.WorldToScreenPoint(endWorld);
         SDL_RenderDrawLine(
             renderer,
-            center.x,
-            center.y,
-            end.x,
-            end.y);
+            centerScreen.x,
+            centerScreen.y,
+            endScreen.x,
+            endScreen.y);
     }
 }
