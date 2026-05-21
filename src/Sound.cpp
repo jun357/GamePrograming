@@ -308,7 +308,7 @@ void UpdateSoundParticles(
             {
                 enemy.rect.x + enemy.rect.w * 0.5f,
                 enemy.rect.y + enemy.rect.h * 0.5f
-            }
+            };
 
             for (const auto& particle : write)
             {
