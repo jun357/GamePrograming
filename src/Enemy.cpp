@@ -931,11 +931,6 @@ void NotifyEnemyOfNoise(
     }
 }
 
-void NotifyEnemyOfNoise(Enemy& enemy, Vec2 noisePos, float energy)
-{
-    NotifyEnemyOfNoise(enemy, noisePos, energy, false);
-}
-
 const char* GetEnemyStateName(EnemyState state)
 {
     switch (state)
