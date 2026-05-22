@@ -1,11 +1,12 @@
-﻿#include <SDL2/SDL.h>
+#include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 
 #include <iostream>
 #include <vector>
 #include <cmath>
 #include <thread>
-#include <functional>
+#include <algorithm>
+#include <random>
 
 #include "Globals.h"
 #include "Math.h"
@@ -18,7 +19,6 @@
 // =====================================================
 // 게임 상태
 // =====================================================
-
 enum GameState
 {
     PLAYING,
@@ -28,101 +28,170 @@ enum GameState
 
 bool running = true;
 
-// =====================================================
-// 스테이지 리셋
-// centerX = x + w / 2
-// centerY = y + h / 2
-// =====================================================
+bool showStageText = true;
+Uint32 stageTextStart = 0;
+int displayStage = 1;
 
-void ResetStage(
-    SDL_Rect& player,
-    std::vector<Enemy>& enemies)
+const int PLAYER_MAX_HP = 100;
+
+// =====================================================
+// 스테이지 / 이변 상태
+// =====================================================
+int stage = 1;
+bool anomalyActive = false;
+
+// 이변 종류 (레이어 방식)
+bool anomalyWall = false;
+bool anomalyEnemy = false;
+bool anomalyFOV = false;
+bool anomalySound = false;
+
+// =====================================================
+// 골
+// =====================================================
+SDL_Rect goalNormal  = {700, 500, 40, 40};
+SDL_Rect goalAnomaly = {700, 100, 40, 40};
+
+// =====================================================
+// 벽 데이터
+// =====================================================
+std::vector<Wall> baseWalls;
+std::vector<Wall> anomalyWalls;
+
+// =====================================================
+// 벽 합성 (base + anomaly)
+// =====================================================
+std::vector<Wall> GetActiveWalls()
 {
-    player = { 100,100,32,32 };
+    std::vector<Wall> result = baseWalls;
+
+    if (anomalyWall)
+    {
+        result.insert(result.end(),
+                      anomalyWalls.begin(),
+                      anomalyWalls.end());
+    }
+
+    return result;
+}
+
+// =====================================================
+// 스테이지 초기화
+// =====================================================
+void ResetStage(SDL_Rect& player, std::vector<Enemy>& enemies)
+{
+    player = {100,100,32,32};
 
     enemies.clear();
 
-    AddPatrolGuard(
-        enemies,
-        {516.0f, 316.0f},
+    AddPatrolGuard(enemies, {516,316},
+        {{650,316},{650,450},{516,450},{516,316}});
+
+    AddSentry(enemies, {316,216});
+    AddOfficer(enemies, {666,466});
+
+    showStageText = true;
+    stageTextStart = SDL_GetTicks();
+    displayStage = stage;
+
+    // reset anomaly
+    anomalyActive = false;
+    anomalyWall = false;
+    anomalyEnemy = false;
+    anomalyFOV = false;
+    anomalySound = false;
+
+    // stage 1 = safe
+    if (stage == 1) return;
+
+    // random anomaly count (0~2)
+    int count = rand() % 2;
+
+    std::vector<int> pool = {0};
+    std::random_device rd;
+    std::mt19937 g(rd());
+    std::shuffle(pool.begin(), pool.end(), g);
+
+    for (int i = 0; i < count; i++)
+    {
+        switch (pool[i])
         {
-            {650.0f, 316.0f},
-            {650.0f, 450.0f},
-            {516.0f, 450.0f},
-            {516.0f, 316.0f}
-        });
-    AddSentry(
-        enemies,
-        {316.0f, 216.0f});
-    AddOfficer(
-        enemies,
-        {666.0f, 466.0f});
+            case 0: anomalyWall = true; break;
+            case 1: anomalyEnemy = true; break;
+            case 2: anomalyFOV = true; break;
+            case 3: anomalySound = true; break;
+        }
+    }
+    anomalyActive = anomalyWall || anomalyEnemy || anomalyFOV || anomalySound;
+
+    std::cout
+    << "anomalyActive: " << anomalyActive
+    << "anomalyWall: " << anomalyWall
+    << std::endl;
 }
 
 // =====================================================
-// 텍스트 렌더
+// 텍스트 출력
 // =====================================================
-
-void DrawCenteredText(
-    SDL_Renderer* renderer,
-    TTF_Font* font,
-    const char* text)
+void DrawCenteredText(SDL_Renderer* renderer, TTF_Font* font, const char* text)
 {
-    SDL_Color color =
-    {
-        255,255,255,255
-    };
+    SDL_Color color = {255,255,255,255};
 
     SDL_Surface* surface =
-        TTF_RenderText_Solid(
-            font,
-            text,
-            color);
+        TTF_RenderText_Solid(font, text, color);
 
     SDL_Texture* texture =
-        SDL_CreateTextureFromSurface(
-            renderer,
-            surface);
+        SDL_CreateTextureFromSurface(renderer, surface);
 
     SDL_Rect dst;
-
     dst.w = surface->w;
     dst.h = surface->h;
+    dst.x = SCREEN_WIDTH / 2 - dst.w / 2;
+    dst.y = SCREEN_HEIGHT / 2 - dst.h / 2;
 
-    dst.x =
-        SCREEN_WIDTH / 2 - dst.w / 2;
-
-    dst.y =
-        SCREEN_HEIGHT / 2 - dst.h / 2;
-
-    SDL_RenderCopy(
-        renderer,
-        texture,
-        NULL,
-        &dst);
+    SDL_RenderCopy(renderer, texture, NULL, &dst);
 
     SDL_FreeSurface(surface);
-
     SDL_DestroyTexture(texture);
 }
 
-// =====================================================
-// 메인
-// =====================================================
+void DrawStageText(SDL_Renderer* renderer, TTF_Font* font, int stage)
+{
+    std::string text = "STAGE " + std::to_string(stage);
 
+    SDL_Color color = {255,255,255,255};
+
+    TTF_Font* bigFont = TTF_OpenFont("unscii-16.ttf", 72);
+
+    SDL_Surface* surface =
+        TTF_RenderText_Solid(bigFont, text.c_str(), color);
+
+    SDL_Texture* texture =
+        SDL_CreateTextureFromSurface(renderer, surface);
+
+    SDL_Rect dst;
+    dst.w = surface->w;
+    dst.h = surface->h;
+    dst.x = SCREEN_WIDTH/2 - dst.w/2;
+    dst.y = SCREEN_HEIGHT/2 - dst.h/2;
+
+    SDL_RenderCopy(renderer, texture, NULL, &dst);
+
+    SDL_FreeSurface(surface);
+    SDL_DestroyTexture(texture);
+    TTF_CloseFont(bigFont);
+}
+
+// =====================================================
+// MAIN
+// =====================================================
 int main(int argc, char* args[])
 {
-    // =================================================
-    // SDL 초기화
-    // =================================================
-
     SDL_Init(SDL_INIT_VIDEO);
-
     TTF_Init();
 
     SDL_Window* window =
-        SDL_CreateWindow(
-            "Stealth Game",
+        SDL_CreateWindow("Stealth Game",
             SDL_WINDOWPOS_CENTERED,
             SDL_WINDOWPOS_CENTERED,
             SCREEN_WIDTH,
@@ -130,19 +199,9 @@ int main(int argc, char* args[])
             SDL_WINDOW_SHOWN);
 
     SDL_Renderer* renderer =
-        SDL_CreateRenderer(
-            window,
-            -1,
-            SDL_RENDERER_ACCELERATED);
+        SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
-    // =================================================
-    // 폰트
-    // =================================================
-
-    TTF_Font* font =
-        TTF_OpenFont(
-            "unscii-16.ttf",
-            48);
+    TTF_Font* font = TTF_OpenFont("unscii-16.ttf", 48);
 
     if (!font)
     {
@@ -150,167 +209,123 @@ int main(int argc, char* args[])
         return 0;
     }
 
-    // =================================================
-    // 게임 오브젝트
-    // =================================================
-
-    SDL_Rect player =
-    {
-        100,100,32,32
-    };
-
-    SDL_Rect goal =
-    {
-        700,
-        500,
-        40,
-        40
-    };
-
-    std::vector<Wall> walls =
-    {
-        // concrete
-        {
-            {200,150,100,200}
-        },
-
-        // wood
-        {
-            {400,100,50,300}
-        },
-
-        // thin divider
-        {
-            {100,400,300,50}
-        }
-    };
-
-    PrepareSoundWalls(walls);
+    SDL_Rect player = {100,100,32,32};
 
     std::vector<Enemy> enemies;
-
     std::vector<SoundParticle> soundParticles;
 
+    // base map
+    baseWalls =
+    {
+        {{200,150,100,200}},
+        {{400,100,50,300}},
+        {{100,400,300,50}}
+    };
+
+    // anomaly map (extra)
+    anomalyWalls =
+    {
+        {{500,350,200,40}},
+        {{250,250,40,200}}
+    };
+
+    auto activeWalls = GetActiveWalls();
+
+    PrepareSoundWalls(activeWalls);
     ResetStage(player, enemies);
 
-    // =================================================
-    // 카메라
-    // =================================================
     Camera2D camera;
     camera.zoom = 1.0f;
 
-    // =================================================
-    // 게임 상태
-    // =================================================
-
     GameState gameState = PLAYING;
-
     Uint32 stateTimer = 0;
 
     float soundTimer = 0.0f;
-
     float runWallSoundCooldown = 0.0f;
 
-    // =================================================
-    // 플레이어 체력 및 경보 상태
-    // =================================================
-
-    const int PLAYER_MAX_HP = 100;
     int playerHP = PLAYER_MAX_HP;
 
     bool alarmActive = false;
 
-    // =================================================
-    // 타이머
-    // =================================================
+    Uint64 prev = SDL_GetPerformanceCounter();
+    Uint64 freq = SDL_GetPerformanceFrequency();
 
-    Uint64 previousCounter =
-        SDL_GetPerformanceCounter();
+    showStageText = true;
+    stageTextStart = SDL_GetTicks();
+    displayStage = 1;
+    stage = 1;
 
-    Uint64 performanceFrequency =
-        SDL_GetPerformanceFrequency();
-
-    // =================================================
-    // 메인 루프
-    // =================================================
-
+    // =====================================================
+    // GAME LOOP
+    // =====================================================
     while (running)
     {
-        // =============================================
-        // Delta Time
-        // =============================================
+        Uint64 now = SDL_GetPerformanceCounter();
+        float dt = (float)(now - prev) / (float)freq;
+        prev = now;
 
-        Uint64 currentCounter =
-            SDL_GetPerformanceCounter();
-
-        float dt =
-            (float)(currentCounter - previousCounter)
-            / (float)performanceFrequency;
-
-        previousCounter = currentCounter;
-
-        if (dt > 0.05f)
-            dt = 0.05f;
-
-        // =============================================
-        // 이벤트
-        // =============================================
+        if (dt > 0.05f) dt = 0.05f;
 
         SDL_Event e;
-
         while (SDL_PollEvent(&e))
         {
             if (e.type == SDL_QUIT)
-            {
                 running = false;
-            }
         }
 
-        // =============================================
-        // 게임 업데이트
-        // =============================================
+        auto walls = GetActiveWalls();
 
+        // =================================================
+        // PLAYING
+        // =================================================
         if (gameState == PLAYING)
         {
-            const Uint8* keystate =
-                SDL_GetKeyboardState(NULL);
-
-            // =========================================
-            // 플레이어 이동
-            // =========================================
-
-            MoveMode moveMode =
-                GetMoveMode(keystate);
-
-            float moveSpeed =
-                GetMoveSpeed(moveMode);
-
-            float dirX = 0.0f;
-            float dirY = 0.0f;
-
-            if (keystate[SDL_SCANCODE_W]) dirY -= 1.0f;
-            if (keystate[SDL_SCANCODE_S]) dirY += 1.0f;
-            if (keystate[SDL_SCANCODE_A]) dirX -= 1.0f;
-            if (keystate[SDL_SCANCODE_D]) dirX += 1.0f;
-
-            float length =
-                sqrtf(dirX * dirX + dirY * dirY);
-
-            bool isMoving = length > 0.0f;
-
-            if (isMoving)
+            if (showStageText)
             {
-                dirX /= length;
-                dirY /= length;
+                Uint32 now = SDL_GetTicks();
+
+                if (now - stageTextStart < 1200)
+                {
+                    SDL_SetRenderDrawColor(renderer, 20,20,20,255);
+                    SDL_RenderClear(renderer);
+
+                    DrawStageText(renderer, font, displayStage);
+
+                    SDL_RenderPresent(renderer);
+                    continue;
+                }
+                else
+                {
+                    showStageText = false;
+                }
             }
 
-            float dx =
-                dirX * moveSpeed * dt;
+            const Uint8* key = SDL_GetKeyboardState(NULL);
 
-            float dy =
-                dirY * moveSpeed * dt;
+            MoveMode mode = GetMoveMode(key);
+            float speed = GetMoveSpeed(mode);
 
-            bool playerHitWall = MovePlayerWithCollisionResult(player, dx, dy, walls);
+            float dx = 0, dy = 0;
+
+            if (key[SDL_SCANCODE_W]) dy -= 1;
+            if (key[SDL_SCANCODE_S]) dy += 1;
+            if (key[SDL_SCANCODE_A]) dx -= 1;
+            if (key[SDL_SCANCODE_D]) dx += 1;
+
+            float len = sqrtf(dx*dx + dy*dy);
+            bool moving = len > 0;
+
+            if (moving)
+            {
+                dx /= len;
+                dy /= len;
+            }
+
+            dx *= speed * dt;
+            dy *= speed * dt;
+
+            bool hitWall =
+                MovePlayerWithCollisionResult(player, dx, dy, walls);
 
             // =========================================
             // 사운드 발생
@@ -330,22 +345,22 @@ int main(int argc, char* args[])
             camera.FollowImmediate(playerCenter.x, playerCenter.y);
             camera.ClampToBounds(WORLD_WIDTH, WORLD_HEIGHT);
 
-            if (isMoving)
+            if (moving)
             {
-                if (moveMode == RUN)
+                if (mode == RUN)
                 {
                     if (soundTimer >= 0.04f)
                     {
                         EmitSound(soundParticles, playerCenter, 18, 230.0f, 0.75f, 1.2f);
                         soundTimer = 0.0f;
                     }
-                    if (playerHitWall && runWallSoundCooldown <= 0.0f)
+                    if (hitWall && runWallSoundCooldown <= 0.0f)
                     {
                         EmitSound(soundParticles, playerCenter, 42, 270.0f, 2.0f, 1.8f);
                         runWallSoundCooldown = 0.35f;
                     }
                 }
-                else if (moveMode == WALK)
+                else if (mode == WALK)
                 {
                     if (soundTimer >= 0.12f)
                     {
@@ -360,7 +375,7 @@ int main(int argc, char* args[])
             }
 
             bool alarmTriggered = false;
-            
+
             // =========================================
             // thread 출력/입력 버퍼 준비
             // =========================================
@@ -436,17 +451,42 @@ int main(int argc, char* args[])
             {
                 alarmActive = true;
             }
+            // ==============================
+            // HP CHECK
+            // ==============================
             if (playerHP <= 0)
             {
-                playerHP = 0;
+                stage = 1;
                 gameState = LOSE;
-                stateTimer = SDL_GetTicks();
             }
-            if (SDL_HasIntersection(&player, &goal))
-            {
-                gameState = WIN;
+            // ==============================
+            // GOAL CHECK
+            // ==============================
+            bool hitN = SDL_HasIntersection(&player, &goalNormal);
+            bool hitA = SDL_HasIntersection(&player, &goalAnomaly);
 
-                stateTimer = SDL_GetTicks();
+            if (hitN || hitA)
+            {
+                bool correct =
+                    (!anomalyActive && hitN) ||
+                    ( anomalyActive && hitA);
+
+                std::cout
+                << "anomalyActive: " << anomalyActive
+                << " hitN: " << hitN
+                << " hitA: " << hitA
+                << std::endl;
+
+                if (correct)
+                {
+                    stage++;
+                    gameState = WIN;
+                }
+                else
+                {
+                    stage = 1;
+                    gameState = LOSE;
+                }
             }
         }
         else
@@ -473,17 +513,10 @@ int main(int argc, char* args[])
             }
         }
 
-        // =============================================
-        // 렌더
-        // =============================================
-
-        SDL_SetRenderDrawColor(
-            renderer,
-            20,
-            20,
-            20,
-            255);
-
+        // =================================================
+        // RENDER
+        // =================================================
+        SDL_SetRenderDrawColor(renderer, 20,20,20,255);
         SDL_RenderClear(renderer);
 
         // =============================================
@@ -499,50 +532,28 @@ int main(int argc, char* args[])
                 camera);
         }
 
-        // =============================================
-        // 벽
-        // =============================================
-
-        SDL_SetRenderDrawColor(
-            renderer,
-            120,
-            120,
-            120,
-            255);
+        // walls
+        SDL_SetRenderDrawColor(renderer, 120,120,120,255);
 
         for (auto& w : walls)
         {
-            SDL_Rect wallScreen = camera.WorldToScreenRect(w.rect);
-            SDL_RenderFillRect(renderer, &wallScreen);
+            SDL_Rect r = camera.WorldToScreenRect(w.rect);
+            SDL_RenderFillRect(renderer, &r);
         }
 
-        // =============================================
-        // 목표
-        // =============================================
+        // goals
+        SDL_SetRenderDrawColor(renderer, 0,255,0,255);
+        SDL_Rect gn = camera.WorldToScreenRect(goalNormal);
+        SDL_RenderDrawRect(renderer, &gn);
 
-        SDL_SetRenderDrawColor(
-            renderer,
-            255,
-            255,
-            0,
-            255);
+        SDL_SetRenderDrawColor(renderer, 255,0,0,255);
+        SDL_Rect ga = camera.WorldToScreenRect(goalAnomaly);
+        SDL_RenderDrawRect(renderer, &ga);
 
-        SDL_Rect goalScreen = camera.WorldToScreenRect(goal);
-        SDL_RenderDrawRect(renderer, &goalScreen);
-
-        // =============================================
-        // 플레이어
-        // =============================================
-
-        SDL_SetRenderDrawColor(
-            renderer,
-            0,
-            255,
-            0,
-            255);
-
-        SDL_Rect playerScreen = camera.WorldToScreenRect(player);
-        SDL_RenderFillRect(renderer, &playerScreen);
+        // player
+        SDL_SetRenderDrawColor(renderer, 0,255,0,255);
+        SDL_Rect ps = camera.WorldToScreenRect(player);
+        SDL_RenderFillRect(renderer, &ps);
 
         // =============================================
         // 적
@@ -612,22 +623,14 @@ int main(int argc, char* args[])
         }
 
         SDL_RenderPresent(renderer);
-
         SDL_Delay(16);
     }
 
-    // =================================================
-    // 정리
-    // =================================================
-
+    // cleanup
     TTF_CloseFont(font);
-
     SDL_DestroyRenderer(renderer);
-
     SDL_DestroyWindow(window);
-
     TTF_Quit();
-
     SDL_Quit();
 
     return 0;
