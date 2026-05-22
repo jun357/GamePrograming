@@ -25,3 +25,15 @@ float RandomFloat();
 Vec2 Reflect(
     const Vec2& v,
     const Vec2& n);
+
+float LengthSq(const Vec2& v);
+float DistanceSq(const Vec2& a, const Vec2& b);
+float Distance(const Vec2& a, const Vec2& b);
+
+float Cross(const Vec2& a, const Vec2& b);
+float ClampFloat(float value, float lo, float hi);
+
+Vec2 AngleToDir(float angle);
+float DirToAngle(Vec2 dir);
+float WrapAngle(float angle);
+float LerpAngle(float from, float to, float t);

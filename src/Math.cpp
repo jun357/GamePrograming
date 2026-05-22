@@ -81,3 +81,60 @@ Vec2 Reflect(
     return
         v - n * (2.0f * Dot(v, n));
 }
+
+float LengthSq(const Vec2& v)
+{
+    return v.x * v.x + v.y * v.y;
+}
+
+float DistanceSq(const Vec2& a, const Vec2& b)
+{
+    return LengthSq(b - a);
+}
+
+float Distance(const Vec2& a, const Vec2& b)
+{
+    return sqrtf(DistanceSq(a, b));
+}
+
+float Cross(const Vec2& a, const Vec2& b)
+{
+    return a.x * b.y - a.y * b.x;
+}
+
+float ClampFloat(float value, float lo, float hi)
+{
+    if (value < lo) return lo;
+    if (value > hi) return hi;
+    return value;
+}
+
+Vec2 AngleToDir(float angle)
+{
+    return { cosf(angle), sinf(angle) };
+}
+
+float DirToAngle(Vec2 dir)
+{
+    return atan2f(dir.y, dir.x);
+}
+
+float WrapAngle(float angle)
+{
+    constexpr float PI = 3.14159265358979323846f;
+    constexpr float TWO_PI = PI * 2.0f;
+
+    angle = fmodf(angle + PI, TWO_PI);
+    if (angle < 0.0f)
+    {
+        angle += TWO_PI;
+    }
+
+    return angle - PI;
+}
+
+float LerpAngle(float from, float to, float t)
+{
+    float diff = atan2f(sinf(to - from), cosf(to - from));
+    return WrapAngle(from + diff * t);
+}

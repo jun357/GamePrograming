@@ -13,29 +13,23 @@ void EmitSound(
     std::vector<SoundParticle>& particles,
     Vec2 origin,
     int count,
-    float speed)
+    float speed,
+    float loudness,
+    float life)
 {
-    for (int i = 0; i < count; i++)
+    for (int i = 0; i < count; ++i)
     {
-        float angle =
-            RandomFloat() * 6.283185f;
-
-        Vec2 dir =
-        {
-            cosf(angle),
-            sinf(angle)
-        };
+        float angle = RandomFloat() * 6.28318530718f;
+        Vec2 dir = { cosf(angle), sinf(angle) };
 
         SoundParticle p;
-
         p.pos = origin;
-
+        p.source = origin;
         p.vel = dir * speed;
-
         p.radius = 2.0f;
-
         p.mass = 1.0f;
-
+        p.loudness = loudness;
+        p.life = life;
         p.alive = true;
 
         particles.push_back(p);
@@ -235,27 +229,29 @@ void UpdateSoundParticles(
 {
     write = read; // 기본 복사 (중요)
 
+    for (auto& result : hearingBuffer)
+    {
+        result = HearingResult{};
+    }
+
     const int substeps = 4;
     float stepDt = dt / substeps;
 
-    for (int s = 0; s < substeps; s++)
+    for (int s = 0; s < substeps; ++s)
     {
         // =========================================
         // 이동
         // =========================================
-        
-        for (int i = 0; i < (int)read.size(); i++)
+        for (int i = 0; i < static_cast<int>(write.size()); ++i)
         {
-            if (!read[i].alive) continue;
+            if (!write[i].alive)
+            {
+                continue;
+            }
 
-            write[i].pos += read[i].vel * stepDt;
-
-            // =====================================
-            // 🔥 고정 확률 소멸
-            // =====================================
-
-            const float deathRate = 0.8f; // 초당 확률
-            if (RandomFloat() < deathRate * stepDt)
+            write[i].pos += write[i].vel * stepDt;         
+            write[i].life -= stepDt;
+            if (write[i].life <= 0.0f)
             {
                 write[i].alive = false;
                 continue;
@@ -265,15 +261,19 @@ void UpdateSoundParticles(
         // =========================================
         // 셀 충돌
         // =========================================
-
-        for (int i = 0; i < (int)read.size(); i++)
+        for (int i = 0; i < static_cast<int>(write.size()); ++i)
         {
-            if (!read[i].alive) continue;
+            if (!write[i].alive)
+            {
+                continue;
+            }
 
             for (const auto& w : walls)
             {
+                SoundParticle before = write[i];
+
                 ResolveCellCollision(
-                    read[i],
+                    before,
                     write[i],
                     w);
             }
@@ -282,45 +282,80 @@ void UpdateSoundParticles(
         // =========================================
         // 입자 충돌
         // =========================================
-
-        for (int i = 0; i < (int)read.size(); i++)
+        
+        for (int i = 0; i < static_cast<int>(write.size()); ++i)
         {
-            for (int j = i + 1; j < (int)read.size(); j++)
+            if (!write[i].alive)
             {
+                continue;
+            }
+
+            for (int j = i + 1; j < static_cast<int>(write.size()); ++j)
+            {
+                if (!write[j].alive)
+                {
+                    continue;
+                }
+                
+                SoundParticle aBefore = write[i];
+                SoundParticle bBefore = write[j];
+
                 ResolveParticleCollision(
-                    read[i], read[j],
-                    write[i], write[j]);
+                    aBefore,
+                    bBefore,
+                    write[i],
+                    write[j]);
             }
         }
+    }
 
-        // =============================================
-        // 적 hearing
-        // =============================================
+    // =============================================
+    // 적 hearing
+    // =============================================
+    for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
+    {
+        const EnemyAudioSnapshot& enemy = enemies[i];
 
-        for (size_t i = 0; i < enemies.size(); ++i)
+        if (!enemy.alive)
         {
-            const auto& enemy = enemies[i];
-            if (!enemy.alive) continue;
+            continue;
+        }
 
-            float ex = enemy.rect.x + enemy.rect.w * 0.5f;
-            float ey = enemy.rect.y + enemy.rect.h * 0.5f;
+        Vec2 enemyCenter =
+        {
+            enemy.rect.x + enemy.rect.w * 0.5f,
+            enemy.rect.y + enemy.rect.h * 0.5f
+        };
 
-            for (const auto& p : read)
+        for (const auto& particle : write)
+        {
+            if (!particle.alive)
             {
-                if (!p.alive) continue;
+                continue;
+            }
 
-                float dx = ex - p.pos.x;
-                float dy = ey - p.pos.y;
-                float distSq = dx * dx + dy * dy;
+            float hearRadius = 34.0f + particle.loudness * 10.0f;
+            float distSq = DistanceSq(enemyCenter, particle.pos);
+            float hearRadiusSq = hearRadius * hearRadius;
 
-                float hearRadius = 32.0f;
+            if (distSq >= hearRadiusSq)
+            {
+                continue;
+            }
 
-                if (distSq < hearRadius * hearRadius)
-                {
-                    hearingBuffer[i].energy += 1.0f;
-                    hearingBuffer[i].noisePos = p.pos;
-                    hearingBuffer[i].heard = true;
-                }
+            float dist = sqrtf(distSq);
+            float attenuation =
+                1.0f - ClampFloat(dist / hearRadius, 0.0f, 1.0f);
+
+            float energy = particle.loudness * attenuation;
+
+            HearingResult& result = hearingBuffer[i];
+            result.energy += energy;
+            result.heard = true;
+            if (energy > result.strongestEnergy)
+            {
+                result.strongestEnergy = energy;
+                result.noisePos = particle.source;
             }
         }
     }
@@ -330,7 +365,6 @@ void CleanUpParticles(
     std::vector<SoundParticle>& read,
     std::vector<SoundParticle>& write)
 {
-    // swap
     std::swap(read, write);
 
     read.erase(

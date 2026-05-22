@@ -10,12 +10,19 @@
 
 struct SoundParticle
 {
-    Vec2 pos;
-    Vec2 vel;
+    Vec2 pos = { 0.0f, 0.0f };
+    Vec2 vel = { 0.0f, 0.0f };
+
+    // 실제 소음 발생 지점
+    Vec2 source = { 0.0f, 0.0f };
 
     float radius = 2.0f;
 
     float mass = 1.0f;
+
+    float loudness = 1.0f;
+
+    float life = 1.4f;
 
     bool alive = true;
 };
@@ -29,7 +36,8 @@ struct EnemyAudioSnapshot
 struct HearingResult
 {
     float energy = 0.0f;
-    Vec2 noisePos = {0.0f, 0.0f};
+    float strongestEnergy = 0.0f;
+    Vec2 noisePos = { 0.0f, 0.0f };
     bool heard = false;
 };
 
@@ -37,7 +45,9 @@ void EmitSound(
     std::vector<SoundParticle>& particles,
     Vec2 origin,
     int count,
-    float energy);
+    float speed,
+    float loudness = 1.0f,
+    float life = 1.4f);
 
 void PrepareSoundWalls(std::vector<Wall>& walls);
 

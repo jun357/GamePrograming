@@ -21,3 +21,9 @@ void MovePlayer(
     float dx,
     float dy,
     const std::vector<Wall>& walls);
+
+bool MovePlayerWithCollisionResult(
+    SDL_Rect& player,
+    float dx,
+    float dy,
+    const std::vector<Wall>& walls);

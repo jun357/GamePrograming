@@ -209,6 +209,8 @@ int main(int argc, char* args[])
 
     float soundTimer = 0.0f;
 
+    float runWallSoundCooldown = 0.0f;
+
     // =================================================
     // 플레이어 체력 및 경보 상태
     // =================================================
@@ -308,51 +310,46 @@ int main(int argc, char* args[])
             float dy =
                 dirY * moveSpeed * dt;
 
-            MovePlayer(
-                player,
-                dx,
-                dy,
-                walls);
+            bool playerHitWall = MovePlayerWithCollisionResult(player, dx, dy, walls);
 
             // =========================================
             // 사운드 발생
             // =========================================
 
             soundTimer += dt;
-
+            
+            if (runWallSoundCooldown > 0.0f)
+            {
+                runWallSoundCooldown -= dt;
+            }
             Vec2 playerCenter =
             {
                 player.x + player.w * 0.5f,
                 player.y + player.h * 0.5f
             };
-
             camera.FollowImmediate(playerCenter.x, playerCenter.y);
+            camera.ClampToBounds(WORLD_WIDTH, WORLD_HEIGHT);
 
             if (isMoving)
             {
                 if (moveMode == RUN)
                 {
-                    if (soundTimer >= 0.03f)
+                    if (soundTimer >= 0.04f)
                     {
-                        EmitSound(
-                            soundParticles,
-                            playerCenter,
-                            23,
-                            220.0f);
-
+                        EmitSound(soundParticles, playerCenter, 18, 230.0f, 0.75f, 1.2f);
                         soundTimer = 0.0f;
+                    }
+                    if (playerHitWall && runWallSoundCooldown <= 0.0f)
+                    {
+                        EmitSound(soundParticles, playerCenter, 42, 270.0f, 2.0f, 1.8f);
+                        runWallSoundCooldown = 0.35f;
                     }
                 }
                 else if (moveMode == WALK)
                 {
-                    if (soundTimer >= 0.09f)
+                    if (soundTimer >= 0.12f)
                     {
-                        EmitSound(
-                            soundParticles,
-                            playerCenter,
-                            7,
-                            220.0f);
-
+                        EmitSound(soundParticles, playerCenter, 5, 170.0f, 0.22f, 0.9f);
                         soundTimer = 0.0f;
                     }
                 }
@@ -386,9 +383,9 @@ int main(int argc, char* args[])
                 enemyAudioSnapshot.push_back(snapshot);
             }
             std::vector<HearingResult> hearingBuffer(enemyAudioSnapshot.size());
-            
+
             // =========================================
-            // 사운드 물리 업데이트 thread
+            // 소음 물리 업데이트 thread
             // =========================================
             std::thread soundThread(
                 UpdateSoundParticles,
@@ -399,8 +396,29 @@ int main(int argc, char* args[])
                 std::cref(walls),
                 dt);
             
+            soundThread.join();
+            CleanUpParticles(soundParticles, particlesNext);
+            
             // =========================================
-            // 적 AI 업데이트 thread
+            // 청각 결과를 적 FSM 입력으로 병합
+            // =========================================
+            for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
+            {
+                const HearingResult& hearing = hearingBuffer[i];
+                if (!hearing.heard)
+                {
+                    continue;
+                }
+                
+                NotifyEnemyOfNoise(
+                    enemies[i],
+                    hearing.noisePos,
+                    hearing.energy,
+                    alarmActive);
+            }
+            
+            // =========================================
+            // 적 FSM 업데이트
             // =========================================
             std::thread enemyThread(
                 UpdateEnemies,
@@ -412,32 +430,7 @@ int main(int argc, char* args[])
                 std::ref(playerHP),
                 dt);
             
-            // 두 thread가 끝날 때까지 main thread 대기
-            soundThread.join();
             enemyThread.join();
-            
-            // soundThread 결과를 실제 사운드 파티클 배열에 반영
-            CleanUpParticles(soundParticles, particlesNext);
-            
-            // =========================================
-            // soundThread의 청각 결과를 main thread에서 enemies에 병합
-            // =========================================
-            for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
-            {
-                const HearingResult& hearing = hearingBuffer[i];
-                if (!hearing.heard)
-                {
-                    continue;
-                }
-                enemies[i].hearingEnergy += hearing.energy;
-                enemies[i].lastNoisePos = hearing.noisePos;
-                
-                if (enemies[i].hearingEnergy >= enemies[i].hearingThreshold)
-                {
-                    RequestEnemyInvestigate(enemies[i], hearing.noisePos);
-                    enemies[i].hearingEnergy = 0.0f;
-                }
-            }
             
             if (alarmTriggered)
             {
@@ -469,6 +462,9 @@ int main(int argc, char* args[])
                     enemies);
 
                 soundParticles.clear();
+
+                soundTimer = 0.0f;
+                runWallSoundCooldown = 0.0f;
 
                 playerHP = PLAYER_MAX_HP;
                 alarmActive = false;

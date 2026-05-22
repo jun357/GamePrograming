@@ -67,9 +67,14 @@ struct Enemy
     // =====================================================
     Vec2 investigateTarget = { 0.0f, 0.0f };
     Vec2 lastKnownPlayerPos = { 0.0f, 0.0f };
+    Vec2 returnTarget = { 0.0f, 0.0f };
     float stateTimer = 0.0f;
     float searchTimer = 0.0f;
     float searchDuration = 2.0f;
+    float searchBaseAngle = 0.0f;
+    float investigateTimeout = 4.0f;
+    float returnTimeout = 5.0f;
+    float stuckTimer = 0.0f;
 
     // =====================================================
     // 소음 (임시)
@@ -77,6 +82,9 @@ struct Enemy
     float hearingEnergy = 0.0f;
     float hearingThreshold = 4.0f;
     Vec2 lastNoisePos = { 0.0f, 0.0f };
+    bool hasPendingNoise = false;
+    Vec2 pendingNoisePos = { 0.0f, 0.0f };
+    float pendingNoiseEnergy = 0.0f;
 
     bool alerted = false;
 
@@ -88,6 +96,14 @@ struct Enemy
     float firstShotDelay = 0.5f;   // 비경보 상태에서 첫 발까지 대기 시간
     float attackRange = 250.0f;    // 총 사정거리
     int attackDamage = 20;
+
+    // =====================================================
+    // 경보
+    // =====================================================
+    bool heightenedAlert = false;
+    float alertLostTimer = 0.0f;
+    float alertSearchDuration = 4.0f;
+    float alertSearchBaseAngle = 0.0f;
 };
 
 void UpdateEnemies(
@@ -112,7 +128,8 @@ void RequestEnemyInvestigate(
 void NotifyEnemyOfNoise(
     Enemy& enemy,
     Vec2 noisePos,
-    float energy);
+    float energy,
+    bool alarmActive);
 
 const char* GetEnemyStateName(EnemyState state);
 
