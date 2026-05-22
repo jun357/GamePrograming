@@ -76,6 +76,55 @@ std::vector<Wall> GetActiveWalls()
 }
 
 // =====================================================
+// 이변 효과 적용
+// =====================================================
+void ApplyAnomalyEffects(std::vector<Enemy>& enemies)
+{
+    // 1. Enemy 이변:
+    // 추가 보초를 배치한다.
+    // 위치는 현재 맵 기준 벽과 겹치지 않고, 붉은 목표 지점 근처를 감시하는 쪽으로 둔다.
+    if (anomalyEnemy)
+    {
+        AddSentry(enemies, {560.0f, 140.0f});
+
+        // 새로 추가한 보초가 오른쪽, 즉 anomaly goal 쪽을 보게 함
+        if (!enemies.empty())
+        {
+            enemies.back().angle = 0.0f;
+        }
+    }
+
+    // 2. FOV 이변:
+    // 적 시야가 더 넓고 길어진다.
+    // FOV 렌더링에도 바로 보이므로 플레이어가 이변을 인지하기 쉽다.
+    if (anomalyFOV)
+    {
+        for (auto& enemy : enemies)
+        {
+            enemy.fov *= 1.25f;
+            enemy.viewDist *= 1.20f;
+
+            enemy.headSweepMin *= 1.20f;
+            enemy.headSweepMax *= 1.20f;
+            enemy.headSweepSpeed *= 1.15f;
+        }
+    }
+
+    // 3. Sound 이변:
+    // 적이 소리에 더 민감하게 반응한다.
+    // hearingThreshold가 낮아질수록 같은 소음에도 더 쉽게 Investigate로 전환된다.
+    if (anomalySound)
+    {
+        for (auto& enemy : enemies)
+        {
+            enemy.hearingThreshold *= 0.55f;
+            enemy.searchDuration *= 1.25f;
+            enemy.investigateTimeout *= 1.15f;
+        }
+    }
+}
+
+// =====================================================
 // 스테이지 초기화
 // =====================================================
 void ResetStage(SDL_Rect& player, std::vector<Enemy>& enemies)
@@ -104,30 +153,57 @@ void ResetStage(SDL_Rect& player, std::vector<Enemy>& enemies)
     // stage 1 = safe
     if (stage == 1) return;
 
-    // random anomaly count (0~2)
-    int count = rand() % 2;
-
-    std::vector<int> pool = {0};
+    // random anomaly count
+    // 0~2개 이변을 랜덤으로 선택한다.
+    // stage 1은 위에서 return하므로, 여기까지 오면 stage 2 이상이다.
     std::random_device rd;
-    std::mt19937 g(rd());
-    std::shuffle(pool.begin(), pool.end(), g);
-
-    for (int i = 0; i < count; i++)
+    std::mt19937 rng(rd());
+    
+    // 0~2개 이변 허용.
+    // stage 2 이상에서 반드시 이변이 나오게 하고 싶으면 (1, 2)로 바꾼다.
+    std::uniform_int_distribution<int> countDist(0, 2);
+    int count = countDist(rng);
+    
+    // 0: wall, 1: enemy, 2: fov, 3: sound
+    std::vector<int> pool = { 0, 1, 2, 3 };
+    
+    std::shuffle(pool.begin(), pool.end(), rng);
+    
+    for (int i = 0; i < count && i < static_cast<int>(pool.size()); ++i)
     {
         switch (pool[i])
         {
-            case 0: anomalyWall = true; break;
-            case 1: anomalyEnemy = true; break;
-            case 2: anomalyFOV = true; break;
-            case 3: anomalySound = true; break;
+            case 0:
+                anomalyWall = true;
+                break;
+            case 1:
+                anomalyEnemy = true;
+                break;
+            case 2:
+                anomalyFOV = true;
+                break;
+            case 3:
+                anomalySound = true;
+                break;
         }
     }
-    anomalyActive = anomalyWall || anomalyEnemy || anomalyFOV || anomalySound;
-
+    anomalyActive =
+        anomalyWall ||
+        anomalyEnemy ||
+        anomalyFOV ||
+        anomalySound;
+    
+    // 선택된 이변을 실제 게임 상태에 반영
+    ApplyAnomalyEffects(enemies);
+    
     std::cout
-    << "anomalyActive: " << anomalyActive
-    << "anomalyWall: " << anomalyWall
-    << std::endl;
+        << "[Stage " << stage << "] "
+        << "anomalyActive=" << anomalyActive
+        << " wall=" << anomalyWall
+        << " enemy=" << anomalyEnemy
+        << " fov=" << anomalyFOV
+        << " sound=" << anomalySound
+        << std::endl;
 }
 
 // =====================================================
@@ -229,9 +305,9 @@ int main(int argc, char* args[])
         {{250,250,40,200}}
     };
 
-    auto activeWalls = GetActiveWalls();
+    PrepareSoundWalls(baseWalls);
 
-    PrepareSoundWalls(activeWalls);
+    PrepareSoundWalls(anomalyWalls);
     ResetStage(player, enemies);
 
     Camera2D camera;
@@ -411,12 +487,28 @@ int main(int argc, char* args[])
                 std::cref(walls),
                 dt);
             
+            // =========================================
+            // 적 FSM 업데이트 thread
+            // =========================================
+            std::thread enemyThread(
+                UpdateEnemies,
+                std::ref(enemies),
+                std::cref(playerSnapshot),
+                std::cref(walls),
+                alarmActive,
+                std::ref(alarmTriggered),
+                std::ref(playerHP),
+                dt);
+            
             soundThread.join();
+            enemyThread.join();
             CleanUpParticles(soundParticles, particlesNext);
             
-            // =========================================
-            // 청각 결과를 적 FSM 입력으로 병합
-            // =========================================
+            if (alarmTriggered)
+            {
+                alarmActive = true;
+            }
+            
             for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
             {
                 const HearingResult& hearing = hearingBuffer[i];
@@ -432,21 +524,6 @@ int main(int argc, char* args[])
                     alarmActive);
             }
             
-            // =========================================
-            // 적 FSM 업데이트
-            // =========================================
-            std::thread enemyThread(
-                UpdateEnemies,
-                std::ref(enemies),
-                std::cref(playerSnapshot),
-                std::cref(walls),
-                alarmActive,
-                std::ref(alarmTriggered),
-                std::ref(playerHP),
-                dt);
-            
-            enemyThread.join();
-            
             if (alarmTriggered)
             {
                 alarmActive = true;
@@ -458,6 +535,7 @@ int main(int argc, char* args[])
             {
                 stage = 1;
                 gameState = LOSE;
+                stateTimer = SDL_GetTicks();
             }
             // ==============================
             // GOAL CHECK
@@ -481,11 +559,13 @@ int main(int argc, char* args[])
                 {
                     stage++;
                     gameState = WIN;
+                    stateTimer = SDL_GetTicks();
                 }
                 else
                 {
                     stage = 1;
                     gameState = LOSE;
+                    stateTimer = SDL_GetTicks();
                 }
             }
         }
