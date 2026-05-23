@@ -34,6 +34,10 @@ int displayStage = 1;
 
 const int PLAYER_MAX_HP = 100;
 
+const int PLAYER_HEALTH_BAR_HEIGHT = 18;
+const int ENEMY_HEALTH_BAR_HEIGHT = 6;
+const int ENEMY_HEALTH_BAR_GAP = 4;
+
 // =====================================================
 // 스테이지 / 이변 상태
 // =====================================================
@@ -229,6 +233,52 @@ void DrawCenteredText(SDL_Renderer* renderer, TTF_Font* font, const char* text)
 
     SDL_FreeSurface(surface);
     SDL_DestroyTexture(texture);
+}
+
+static float Clamp01(float value)
+{
+    if (value < 0.0f) return 0.0f;
+    if (value > 1.0f) return 1.0f;
+    return value;
+}
+
+void DrawHealthBar(
+    SDL_Renderer* renderer,
+    int x,
+    int y,
+    int width,
+    int height,
+    float hpRatio)
+{
+    if (width <= 2 || height <= 2)
+    {
+        return;
+    }
+
+    hpRatio = Clamp01(hpRatio);
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    SDL_SetRenderDrawColor(renderer, 40, 40, 40, 200);
+    SDL_Rect bg = { x, y, width, height };
+    SDL_RenderFillRect(renderer, &bg);
+
+    int r = static_cast<int>(255.0f * (1.0f - hpRatio));
+    int g = static_cast<int>(255.0f * hpRatio);
+
+    SDL_SetRenderDrawColor(renderer, r, g, 0, 255);
+    SDL_Rect hp =
+    {
+        x + 1,
+        y + 1,
+        static_cast<int>((width - 2) * hpRatio),
+        height - 2
+    };
+    SDL_RenderFillRect(renderer, &hp);
+
+    // Outline
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 180);
+    SDL_RenderDrawRect(renderer, &bg);
 }
 
 void DrawStageText(SDL_Renderer* renderer, TTF_Font* font, int stage)
@@ -682,6 +732,39 @@ int main(int argc, char* args[])
                 particleScreen.x,
                 particleScreen.y);
         }
+        
+        // =============================================
+        // 체력 바 UI
+        // =============================================
+        
+        for (auto& enemy : enemies)
+        {
+            if (enemy.state == EnemyState::Dead)
+            {
+                continue;
+            }
+            SDL_Rect enemyScreen = camera.WorldToScreenRect(enemy.rect);
+            float enemyHpRatio =
+                (enemy.maxHP > 0)
+                ? static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHP)
+                : 0.0f;
+            
+            DrawHealthBar(
+                renderer,
+                enemyScreen.x,
+                enemyScreen.y - ENEMY_HEALTH_BAR_HEIGHT - ENEMY_HEALTH_BAR_GAP,
+                enemyScreen.w,
+                ENEMY_HEALTH_BAR_HEIGHT,
+                enemyHpRatio);
+        }
+        
+        DrawHealthBar(
+            renderer,
+            0,
+            SCREEN_HEIGHT - PLAYER_HEALTH_BAR_HEIGHT,
+            SCREEN_WIDTH,
+            PLAYER_HEALTH_BAR_HEIGHT,
+            static_cast<float>(playerHP) / static_cast<float>(PLAYER_MAX_HP));
 
         // =============================================
         // UI 텍스트
