@@ -65,6 +65,8 @@ namespace
         enemy.viewDist = 220.0f;
         enemy.rotateSpeed = 0.01f;
         enemy.moveSpeed = 80.0f;
+        enemy.maxHP = 100;
+        enemy.hp = enemy.maxHP;
         enemy.searchDuration = 2.0f;
         enemy.hearingThreshold = 4.0f;
         enemy.attackCooldown = 0.0f;
@@ -81,6 +83,8 @@ namespace
         enemy.viewDist = 250.0f;
         enemy.rotateSpeed = 0.0f;
         enemy.moveSpeed = 70.0f;
+        enemy.maxHP = 100;
+        enemy.hp = enemy.maxHP;
         enemy.searchDuration = 2.0f;
         enemy.hearingThreshold = 4.0f;
         enemy.useHeadSweep = true;
@@ -102,6 +106,8 @@ namespace
         enemy.fov = 75.0f * DEG_TO_RAD;
         enemy.viewDist = 280.0f;
         enemy.rotateSpeed = 0.012f;
+        enemy.maxHP = 200;
+        enemy.hp = enemy.maxHP;
         enemy.moveSpeed = 90.0f;
         enemy.searchDuration = 2.5f;
         enemy.hearingThreshold = 2.5f;
