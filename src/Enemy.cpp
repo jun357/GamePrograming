@@ -17,6 +17,10 @@ namespace
     constexpr float ENEMY_ALERT_SEARCH_TURN_SPEED = 90.0f * DEG_TO_RAD;
     constexpr float NOISE_RETRIGGER_DISTANCE = 80.0f;
     constexpr float NOISE_RETRIGGER_DISTANCE_SQ = NOISE_RETRIGGER_DISTANCE * NOISE_RETRIGGER_DISTANCE;
+    constexpr float ENEMY_ARRIVE_DISTANCE = 3.0f;
+    constexpr float ENEMY_ARRIVE_DISTANCE_SQ = ENEMY_ARRIVE_DISTANCE * ENEMY_ARRIVE_DISTANCE;
+    constexpr float ENEMY_VISUAL_SNAP_DISTANCE = 0.5f;
+    constexpr float ENEMY_VISUAL_SNAP_DISTANCE_SQ = ENEMY_VISUAL_SNAP_DISTANCE * ENEMY_VISUAL_SNAP_DISTANCE;
 
     SDL_Rect MakeEnemyRectFromCenter(Vec2 center)
     {
@@ -390,16 +394,29 @@ static void SaveReturnPointForInvestigation(
     enemy.hasResumePoint = true;
 }
 
+static void SnapEnemyToPointIfVeryClose(Enemy& enemy, Vec2 point)
+{
+    if (DistanceSq(enemy.pos, point) <= ENEMY_VISUAL_SNAP_DISTANCE_SQ)
+    {
+        enemy.pos = point;
+        SyncEnemyRectFromPos(enemy);
+    }
+}
+
 static void RestoreReturnResumeData(Enemy& enemy)
 {
     if (!enemy.hasResumePoint)
     {
         if (enemy.patrolPoints.empty())
         {
-            enemy.pos = enemy.homePos;
-            SyncEnemyRectFromPos(enemy);
-            enemy.angle = enemy.homeAngle;
-            enemy.headSweepOffset = 0.0f;
+            SnapEnemyToPointIfVeryClose(enemy, enemy.homePos);
+
+            if (DistanceSq(enemy.pos, enemy.homePos) <=
+                ENEMY_ARRIVE_DISTANCE_SQ)
+            {
+                enemy.angle = enemy.homeAngle;
+                enemy.headSweepOffset = 0.0f;
+            }
         }
 
         enemy.stuckTimer = 0.0f;
@@ -409,19 +426,24 @@ static void RestoreReturnResumeData(Enemy& enemy)
     if (!enemy.patrolPoints.empty())
     {
         if (enemy.resumePatrolIndex >= 0 &&
-            enemy.resumePatrolIndex < static_cast<int>(enemy.patrolPoints.size()))
+            enemy.resumePatrolIndex <
+            static_cast<int>(enemy.patrolPoints.size()))
         {
             enemy.patrolIndex = enemy.resumePatrolIndex;
         }
 
-        enemy.angle = enemy.resumeAngle;
+        SnapEnemyToPointIfVeryClose(enemy, enemy.resumePatrolPos);
     }
     else
     {
-        enemy.pos = enemy.homePos;
-        SyncEnemyRectFromPos(enemy);
-        enemy.angle = enemy.homeAngle;
-        enemy.headSweepOffset = 0.0f;
+        SnapEnemyToPointIfVeryClose(enemy, enemy.homePos);
+
+        if (DistanceSq(enemy.pos, enemy.homePos) <=
+            ENEMY_ARRIVE_DISTANCE_SQ)
+        {
+            enemy.angle = enemy.homeAngle;
+            enemy.headSweepOffset = 0.0f;
+        }
     }
 
     enemy.hasResumePoint = false;
@@ -580,11 +602,9 @@ static bool MoveEnemyToward(
     float turnSpeed = ENEMY_MOVE_TURN_SPEED)
 {
     Vec2 toTarget = target - enemy.pos;
-    float dist = Length(toTarget);
+    float distSq = LengthSq(toTarget);
 
-    const float ARRIVE_DISTANCE = 3.0f;
-
-    if (dist <= ARRIVE_DISTANCE)
+    if (distSq <= ENEMY_VISUAL_SNAP_DISTANCE_SQ)
     {
         enemy.pos = target;
         SyncEnemyRectFromPos(enemy);
@@ -598,6 +618,8 @@ static bool MoveEnemyToward(
         return false;
     }
 
+    float dist = sqrtf(distSq);
+
     Vec2 before = enemy.pos;
     Vec2 dir = Normalize(toTarget);
 
@@ -607,6 +629,7 @@ static bool MoveEnemyToward(
     }
 
     float step = std::min(enemy.moveSpeed * dt, dist);
+
     MoveEnemyBy(enemy, dir * step, walls);
 
     if (DistanceSq(before, enemy.pos) <= 0.01f)
@@ -618,7 +641,16 @@ static bool MoveEnemyToward(
         enemy.stuckTimer = 0.0f;
     }
 
-    return DistanceSq(target, enemy.pos) <= ARRIVE_DISTANCE * ARRIVE_DISTANCE;
+    float remainingSq = DistanceSq(target, enemy.pos);
+
+    if (remainingSq <= ENEMY_VISUAL_SNAP_DISTANCE_SQ)
+    {
+        enemy.pos = target;
+        SyncEnemyRectFromPos(enemy);
+        enemy.stuckTimer = 0.0f;
+        return true;
+    }
+    return remainingSq <= ENEMY_ARRIVE_DISTANCE_SQ;
 }
 
 // =====================================================
@@ -882,9 +914,6 @@ static void UpdateSearch(Enemy& enemy, float dt)
 
 static void SnapToReturnTargetAndPatrol(Enemy& enemy)
 {
-    enemy.pos = enemy.returnTarget;
-    SyncEnemyRectFromPos(enemy);
-
     RestoreReturnResumeData(enemy);
 
     ChangeEnemyState(enemy, EnemyState::Patrol);
@@ -892,7 +921,8 @@ static void SnapToReturnTargetAndPatrol(Enemy& enemy)
 
 static void UpdateReturn(Enemy& enemy, const std::vector<Wall>& walls, float dt)
 {
-    bool arrived = MoveEnemyToward(enemy, enemy.returnTarget, walls, dt, true);
+    bool arrived =
+        MoveEnemyToward(enemy, enemy.returnTarget, walls, dt, true);
 
     if (arrived)
     {
@@ -901,8 +931,7 @@ static void UpdateReturn(Enemy& enemy, const std::vector<Wall>& walls, float dt)
         ChangeEnemyState(enemy, EnemyState::Patrol);
         return;
     }
-
-    if (enemy.stateTimer >= enemy.returnTimeout || enemy.stuckTimer >= 1.25f)
+    if (enemy.stuckTimer >= 1.25f)
     {
         SnapToReturnTargetAndPatrol(enemy);
     }
