@@ -301,6 +301,104 @@ static bool RectIntersectsAnyWall(
     return false;
 }
 
+static SDL_Rect MakeEnemyCollisionRectAtCenter(
+    const Enemy& enemy,
+    Vec2 center)
+{
+    SDL_Rect rect = enemy.rect;
+
+    rect.x = static_cast<int>(
+        std::round(center.x - rect.w * 0.5f));
+
+    rect.y = static_cast<int>(
+        std::round(center.y - rect.h * 0.5f));
+
+    return rect;
+}
+
+static bool CanEnemyOccupyCenter(
+    const Enemy& enemy,
+    Vec2 center,
+    const std::vector<Wall>& walls)
+{
+    SDL_Rect rect =
+        MakeEnemyCollisionRectAtCenter(enemy, center);
+
+    return !RectIntersectsAnyWall(rect, walls);
+}
+
+static void SetEnemyCenter(Enemy& enemy, Vec2 center)
+{
+    enemy.pos = center;
+    enemy.rect = MakeEnemyCollisionRectAtCenter(enemy, center);
+}
+
+static Vec2 ProjectVec2(Vec2 v, Vec2 onto)
+{
+    float denom = Dot(onto, onto);
+
+    if (denom <= 0.000001f)
+    {
+        return { 0.0f, 0.0f };
+    }
+
+    return onto * (Dot(v, onto) / denom);
+}
+
+static Vec2 MakeFullSpeedSlideDelta(Vec2 delta, Vec2 tangent)
+{
+    Vec2 projected = ProjectVec2(delta, tangent);
+
+    if (LengthSq(projected) <= 0.000001f)
+    {
+        return { 0.0f, 0.0f };
+    }
+
+    return Normalize(projected) * Length(delta);
+}
+
+static void ConsiderEnemyMoveCandidate(
+    const Enemy& enemy,
+    Vec2 startPos,
+    Vec2 target,
+    Vec2 candidateDelta,
+    const std::vector<Wall>& walls,
+    Vec2& bestPos,
+    float& bestScore,
+    bool& foundCandidate)
+{
+    if (LengthSq(candidateDelta) <= 0.000001f)
+    {
+        return;
+    }
+
+    Vec2 candidatePos = startPos + candidateDelta;
+
+    if (!CanEnemyOccupyCenter(enemy, candidatePos, walls))
+    {
+        return;
+    }
+
+    float startDistSq = DistanceSq(startPos, target);
+    float candidateDistSq = DistanceSq(candidatePos, target);
+
+    float score =
+        (startDistSq - candidateDistSq) +
+        LengthSq(candidateDelta) * 0.001f;
+
+    if (score < -0.25f)
+    {
+        return;
+    }
+
+    if (!foundCandidate || score > bestScore)
+    {
+        bestScore = score;
+        bestPos = candidatePos;
+        foundCandidate = true;
+    }
+}
+
 static void FacePoint(Enemy& enemy, Vec2 point)
 {
     Vec2 toTarget = point - enemy.pos;
@@ -567,32 +665,55 @@ static void UpdateHeadSweep(
 static void MoveEnemyBy(
     Enemy& enemy,
     Vec2 delta,
-    const std::vector<Wall>& walls)
+    const std::vector<Wall>& walls,
+    Vec2 target)
 {
-    SDL_Rect next = enemy.rect;
-
-    Vec2 nextPos = enemy.pos;
-    nextPos.x += delta.x;
-    next.x = (int)std::round(nextPos.x - enemy.rect.w * 0.5f);
-
-    if (!RectIntersectsAnyWall(next, walls))
+    if (LengthSq(delta) <= 0.000001f)
     {
-        enemy.pos.x = nextPos.x;
-        enemy.rect.x = next.x;
+        return;
     }
 
-    next = enemy.rect;
-    nextPos = enemy.pos;
-    nextPos.y += delta.y;
-    next.y = (int)std::round(nextPos.y - enemy.rect.h * 0.5f);
+    Vec2 startPos = enemy.pos;
+    Vec2 bestPos = startPos;
 
-    if (!RectIntersectsAnyWall(next, walls))
+    float bestScore = -1.0e30f;
+    bool foundCandidate = false;
+    // 1. 원래 의도한 이동
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, delta, walls, bestPos, bestScore, foundCandidate);
+    // 2. 기존 방식과 유사한 축 분리 이동 후보
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, { delta.x, 0.0f }, walls, bestPos, bestScore, foundCandidate);
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, { 0.0f, delta.y }, walls, bestPos, bestScore, foundCandidate);
+    // 3. full-speed wall slide 후보
+    Vec2 slideX = MakeFullSpeedSlideDelta(delta, { 1.0f, 0.0f });
+    Vec2 slideY = MakeFullSpeedSlideDelta(delta, { 0.0f, 1.0f });
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, slideX, walls, bestPos, bestScore, foundCandidate);
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, slideY, walls, bestPos, bestScore, foundCandidate);
+    // 4. 벽 모서리에서 살짝 틀어 지나가는 후보
+    float stepLen = Length(delta);
+    Vec2 dir = Normalize(delta);
+    const float INV_SQRT2 = 0.70710678118f;
+
+    Vec2 left45 =
     {
-        enemy.pos.y = nextPos.y;
-        enemy.rect.y = next.y;
+        (dir.x - dir.y) * INV_SQRT2,
+        (dir.x + dir.y) * INV_SQRT2
+    };
+
+    Vec2 right45 =
+    {
+        (dir.x + dir.y) * INV_SQRT2,
+        (-dir.x + dir.y) * INV_SQRT2
+    };
+
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, left45 * stepLen, walls, bestPos, bestScore, foundCandidate);
+
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, right45 * stepLen, walls, bestPos, bestScore, foundCandidate);
+
+    if (foundCandidate)
+    {
+        SetEnemyCenter(enemy, bestPos);
     }
 }
-
 static bool MoveEnemyToward(
     Enemy& enemy,
     Vec2 target,
@@ -630,7 +751,7 @@ static bool MoveEnemyToward(
 
     float step = std::min(enemy.moveSpeed * dt, dist);
 
-    MoveEnemyBy(enemy, dir * step, walls);
+    MoveEnemyBy(enemy, dir * step, walls, target);
 
     if (DistanceSq(before, enemy.pos) <= 0.01f)
     {
