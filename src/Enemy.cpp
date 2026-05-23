@@ -933,7 +933,7 @@ static void UpdateAlert(
         enemy.lastKnownPlayerPos = playerCenter;
         enemy.alertSearchBaseAngle = enemy.angle;
 
-        FacePoint(enemy, playerCenter, ENEMY_ALERT_AIM_TURN_SPEED, dt);
+        FacePointSmooth(enemy, playerCenter, ENEMY_ALERT_AIM_TURN_SPEED, dt);
 
         if (IsPlayerInAttackRange(enemy, player) &&
             enemy.attackCooldown <= 0.0f)
