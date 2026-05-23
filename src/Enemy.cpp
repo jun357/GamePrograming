@@ -11,8 +11,12 @@ namespace
     constexpr int DEFAULT_ENEMY_WIDTH = 32;
     constexpr int DEFAULT_ENEMY_HEIGHT = 32;
     constexpr float ENEMY_MOVE_TURN_SPEED = 160.0f * DEG_TO_RAD;
-    constexpr float ENEMY_SEARCH_TURN_SPEED = 85.0f * DEG_TO_RAD;
-    constexpr float ENEMY_ALERT_SEARCH_TURN_SPEED = 140.0f * DEG_TO_RAD;
+    constexpr float ENEMY_INVESTIGATE_TURN_SPEED = 95.0f * DEG_TO_RAD;
+    constexpr float ENEMY_SEARCH_TURN_SPEED = 75.0f * DEG_TO_RAD;
+    constexpr float ENEMY_ALERT_AIM_TURN_SPEED = 180.0f * DEG_TO_RAD;
+    constexpr float ENEMY_ALERT_SEARCH_TURN_SPEED = 90.0f * DEG_TO_RAD;
+    constexpr float NOISE_RETRIGGER_DISTANCE = 80.0f;
+    constexpr float NOISE_RETRIGGER_DISTANCE_SQ = NOISE_RETRIGGER_DISTANCE * NOISE_RETRIGGER_DISTANCE;
 
     SDL_Rect MakeEnemyRectFromCenter(Vec2 center)
     {
@@ -485,6 +489,7 @@ static void ChangeEnemyState(Enemy& enemy, EnemyState newState)
         break;
 
     case EnemyState::Alert:
+        SaveReturnPointForInvestigation(enemy, oldState);
         enemy.heightenedAlert = true;
         enemy.alertLostTimer = 0.0f;
         enemy.alertSearchBaseAngle = enemy.angle;
@@ -571,7 +576,8 @@ static bool MoveEnemyToward(
     Vec2 target,
     const std::vector<Wall>& walls,
     float dt,
-    bool updateFacing = true)
+    bool updateFacing = true,
+    float turnSpeed = ENEMY_MOVE_TURN_SPEED)
 {
     Vec2 toTarget = target - enemy.pos;
     float dist = Length(toTarget);
@@ -597,7 +603,7 @@ static bool MoveEnemyToward(
 
     if (updateFacing)
     {
-        FacePointSmooth(enemy, target, ENEMY_MOVE_TURN_SPEED, dt);
+        FacePointSmooth(enemy, target, turnSpeed, dt);
     }
 
     float step = std::min(enemy.moveSpeed * dt, dist);
@@ -726,6 +732,33 @@ static void ApplyEnemyGunHit(
     enemy.attackCooldown = enemy.attackInterval;
 }
 
+static bool IsNoiseTaskState(EnemyState state)
+{
+    return
+        state == EnemyState::Investigate ||
+        state == EnemyState::Search ||
+        state == EnemyState::Return;
+}
+
+static bool IsSameNoiseAreaForCurrentTask(
+    const Enemy& enemy,
+    Vec2 noisePos)
+{
+    Vec2 reference = enemy.lastNoisePos;
+
+    if (enemy.state == EnemyState::Investigate)
+    {
+        reference = enemy.investigateTarget;
+    }
+    else if (enemy.hasPendingNoise)
+    {
+        reference = enemy.pendingNoisePos;
+    }
+
+    return DistanceSq(noisePos, reference) <=
+        NOISE_RETRIGGER_DISTANCE_SQ;
+}
+
 static void ConsumePendingNoise(Enemy& enemy, bool alarmActive)
 {
     if (!enemy.hasPendingNoise)
@@ -809,7 +842,8 @@ static void UpdateInvestigate(Enemy& enemy, const std::vector<Wall>& walls, floa
         enemy.investigateTarget,
         walls,
         dt,
-        true);
+        true,
+        ENEMY_INVESTIGATE_TURN_SPEED);
 
     if (arrived || enemy.stateTimer >= enemy.investigateTimeout)
     {
@@ -899,7 +933,7 @@ static void UpdateAlert(
         enemy.lastKnownPlayerPos = playerCenter;
         enemy.alertSearchBaseAngle = enemy.angle;
 
-        FacePoint(enemy, playerCenter);
+        FacePoint(enemy, playerCenter, ENEMY_ALERT_AIM_TURN_SPEED, dt);
 
         if (IsPlayerInAttackRange(enemy, player) &&
             enemy.attackCooldown <= 0.0f)
@@ -920,12 +954,13 @@ static void UpdateAlert(
     }
 
     // 마지막 목격 지점에서 강한 수색
-    const float sweepRange = 100.0f * DEG_TO_RAD;
-    float sweep = sinf(enemy.alertLostTimer * 4.5f) * sweepRange;
-    enemy.angle = WrapAngle(enemy.alertSearchBaseAngle + sweep);
+    const float sweepRange = 80.0f * DEG_TO_RAD;
+    const float sweepSpeed = 1.2f;
+    float sweep = sinf(enemy.alertLostTimer * sweepSpeed) * sweepRange;
+    float desiredAngle = WrapAngle(enemy.alertSearchBaseAngle + sweep);
+    RotateTowardAngle(enemy, desiredAngle, ENEMY_ALERT_SEARCH_TURN_SPEED, dt);
 
-    // 전역 경보가 아닌 경우에만 일정 시간 뒤 Search로 완화
-    if (!alarmActive && enemy.alertLostTimer >= enemy.alertSearchDuration)
+    if (enemy.alertLostTimer >= enemy.alertSearchDuration)
     {
         ChangeEnemyState(enemy, EnemyState::Search);
     }
@@ -1051,6 +1086,12 @@ void NotifyEnemyOfNoise(
     if (alarmActive || enemy.state == EnemyState::Alert)
     {
         enemy.hasPendingNoise = false;
+        return;
+    }
+
+    if (IsNoiseTaskState(enemy.state) &&
+        IsSameNoiseAreaForCurrentTask(enemy, noisePos))
+    {
         return;
     }
 
