@@ -597,7 +597,7 @@ static bool MoveEnemyToward(
 
     if (updateFacing)
     {
-        FacePoint(enemy, target, ENEMY_MOVE_TURN_SPEED, dt);
+        FacePointSmooth(enemy, target, ENEMY_MOVE_TURN_SPEED, dt);
     }
 
     float step = std::min(enemy.moveSpeed * dt, dist);
