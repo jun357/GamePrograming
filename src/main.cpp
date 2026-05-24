@@ -869,7 +869,7 @@ int main(int argc, char* args[])
         {
             DrawPauseOverlay(renderer, font);
         }
-        if (ShouldShowAlertIcon(alarmActive, enemies))
+        if (ShouldShowAlarmSirenIndicator(alarmActive, enemies))
         {
             DrawAlarmSirenIndicator(renderer, font);
         }
