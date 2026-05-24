@@ -6,6 +6,175 @@
 #include "Math.h"
 
 // =====================================================
+// 직접 소음 이벤트 hearing 보정
+// =====================================================
+//
+// 현재 파티클 hearing은 particle.pos가 적 근처를 지나갈 때만 작동한다.
+// 그래서 큰 소리라도 랜덤 파티클 경로가 적을 스치지 않으면
+// 적이 못 듣는 것처럼 보일 수 있다.
+//
+// 아래 보정은 새로 발생한 EmitSound() 이벤트의 source를 기준으로
+// 1회 hearing을 추가한다. 소리 파티클 물리 자체는 그대로 유지한다.
+
+static constexpr float DIRECT_SOUND_BASE_RADIUS = 120.0f;
+static constexpr float DIRECT_SOUND_RADIUS_PER_LOUDNESS = 220.0f;
+static constexpr float DIRECT_SOUND_ENERGY_SCALE = 8.0f;
+
+static constexpr float DIRECT_SOUND_WALL_OCCLUSION = 0.65f;
+static constexpr float DIRECT_SOUND_MIN_OCCLUSION = 0.25f;
+
+static constexpr float NEW_SOUND_EVENT_EPSILON = 0.0001f;
+
+static bool LineIntersect(
+    float x1,
+    float y1,
+    float x2,
+    float y2,
+    float x3,
+    float y3,
+    float x4,
+    float y4)
+{
+    float denom =
+        (y4 - y3) * (x2 - x1) -
+        (x4 - x3) * (y2 - y1);
+
+    if (fabsf(denom) <= 0.000001f)
+    {
+        return false;
+    }
+
+    float ua =
+        ((x4 - x3) * (y1 - y3) -
+         (y4 - y3) * (x1 - x3)) / denom;
+
+    float ub =
+        ((x2 - x1) * (y1 - y3) -
+         (y2 - y1) * (x1 - x3)) / denom;
+
+    return
+        ua >= 0.0f && ua <= 1.0f &&
+        ub >= 0.0f && ub <= 1.0f;
+}
+
+static bool LineIntersectsRect(
+    Vec2 a,
+    Vec2 b,
+    const SDL_Rect& rect)
+{
+    float rx = static_cast<float>(rect.x);
+    float ry = static_cast<float>(rect.y);
+    float rw = static_cast<float>(rect.w);
+    float rh = static_cast<float>(rect.h);
+
+    if (LineIntersect(a.x, a.y, b.x, b.y, rx, ry, rx + rw, ry))
+    {
+        return true;
+    }
+
+    if (LineIntersect(a.x, a.y, b.x, b.y, rx, ry, rx, ry + rh))
+    {
+        return true;
+    }
+
+    if (LineIntersect(a.x, a.y, b.x, b.y, rx + rw, ry, rx + rw, ry + rh))
+    {
+        return true;
+    }
+
+    if (LineIntersect(a.x, a.y, b.x, b.y, rx, ry + rh, rx + rw, ry + rh))
+    {
+        return true;
+    }
+
+    return false;
+}
+
+static float ComputeSoundOcclusion(
+    Vec2 source,
+    Vec2 listener,
+    const std::vector<Wall>& walls)
+{
+    float occlusion = 1.0f;
+
+    for (const auto& wall : walls)
+    {
+        if (LineIntersectsRect(source, listener, wall.rect))
+        {
+            occlusion *= DIRECT_SOUND_WALL_OCCLUSION;
+        }
+    }
+
+    if (occlusion < DIRECT_SOUND_MIN_OCCLUSION)
+    {
+        occlusion = DIRECT_SOUND_MIN_OCCLUSION;
+    }
+
+    return occlusion;
+}
+
+static void AddHearingEnergy(
+    HearingResult& result,
+    Vec2 noisePos,
+    float energy)
+{
+    if (energy <= 0.0f)
+    {
+        return;
+    }
+
+    result.energy += energy;
+    result.heard = true;
+
+    if (energy > result.strongestEnergy)
+    {
+        result.strongestEnergy = energy;
+        result.noisePos = noisePos;
+    }
+}
+
+static void AddDirectSoundEventHearing(
+    const SoundParticle& particle,
+    Vec2 enemyCenter,
+    const std::vector<Wall>& walls,
+    HearingResult& result)
+{
+    float hearRadius =
+        DIRECT_SOUND_BASE_RADIUS +
+        particle.loudness * DIRECT_SOUND_RADIUS_PER_LOUDNESS;
+
+    float distSq = DistanceSq(enemyCenter, particle.source);
+    float hearRadiusSq = hearRadius * hearRadius;
+
+    if (distSq >= hearRadiusSq)
+    {
+        return;
+    }
+
+    float dist = sqrtf(distSq);
+
+    float attenuation =
+        1.0f - ClampFloat(dist / hearRadius, 0.0f, 1.0f);
+
+    float occlusion =
+        ComputeSoundOcclusion(
+            particle.source,
+            enemyCenter,
+            walls);
+
+    float energy =
+        particle.loudness *
+        attenuation *
+        occlusion *
+        DIRECT_SOUND_ENERGY_SCALE;
+
+    AddHearingEnergy(
+        result,
+        particle.source,
+        energy);
+}
+
+// =====================================================
 // 사운드 생성
 // =====================================================
 
@@ -17,6 +186,15 @@ void EmitSound(
     float loudness,
     float life)
 {
+    static int nextSoundEventId = 1;
+
+    int eventId = nextSoundEventId++;
+
+    if (nextSoundEventId <= 0)
+    {
+        nextSoundEventId = 1;
+    }
+
     for (int i = 0; i < count; ++i)
     {
         float angle = RandomFloat() * 6.28318530718f;
@@ -25,6 +203,10 @@ void EmitSound(
         SoundParticle p;
         p.pos = origin;
         p.source = origin;
+
+        p.eventId = eventId;
+        p.age = 0.0f;
+
         p.vel = dir * speed;
         p.radius = 2.0f;
         p.mass = 1.0f;
@@ -248,8 +430,9 @@ void UpdateSoundParticles(
             {
                 continue;
             }
-
-            write[i].pos += write[i].vel * stepDt;         
+            
+            write[i].pos += write[i].vel * stepDt;
+            write[i].age += stepDt;
             write[i].life -= stepDt;
             if (write[i].life <= 0.0f)
             {
@@ -327,6 +510,11 @@ void UpdateSoundParticles(
             enemy.rect.y + enemy.rect.h * 0.5f
         };
 
+        HearingResult& result = hearingBuffer[i];
+
+        std::vector<int> processedEventIds;
+        processedEventIds.reserve(16);
+
         for (const auto& particle : write)
         {
             if (!particle.alive)
@@ -334,7 +522,36 @@ void UpdateSoundParticles(
                 continue;
             }
 
+            // =====================================================
+            // 1. 직접 소음 이벤트 hearing
+            // =====================================================
+            if (particle.eventId != 0 &&
+                particle.age <= dt + NEW_SOUND_EVENT_EPSILON)
+            {
+                bool alreadyProcessed =
+                    std::find(
+                        processedEventIds.begin(),
+                        processedEventIds.end(),
+                        particle.eventId)
+                    != processedEventIds.end();
+
+                if (!alreadyProcessed)
+                {
+                    processedEventIds.push_back(particle.eventId);
+
+                    AddDirectSoundEventHearing(
+                        particle,
+                        enemyCenter,
+                        walls,
+                        result);
+                }
+            }
+
+            // =====================================================
+            // 2. 파티클 위치 기반 hearing
+            // =====================================================
             float hearRadius = 34.0f + particle.loudness * 10.0f;
+
             float distSq = DistanceSq(enemyCenter, particle.pos);
             float hearRadiusSq = hearRadius * hearRadius;
 
@@ -344,19 +561,16 @@ void UpdateSoundParticles(
             }
 
             float dist = sqrtf(distSq);
+
             float attenuation =
                 1.0f - ClampFloat(dist / hearRadius, 0.0f, 1.0f);
 
             float energy = particle.loudness * attenuation;
 
-            HearingResult& result = hearingBuffer[i];
-            result.energy += energy;
-            result.heard = true;
-            if (energy > result.strongestEnergy)
-            {
-                result.strongestEnergy = energy;
-                result.noisePos = particle.source;
-            }
+            AddHearingEnergy(
+                result,
+                particle.source,
+                energy);
         }
     }
 }
