@@ -22,6 +22,11 @@ namespace
     constexpr float ENEMY_VISUAL_SNAP_DISTANCE = 0.5f;
     constexpr float ENEMY_VISUAL_SNAP_DISTANCE_SQ = ENEMY_VISUAL_SNAP_DISTANCE * ENEMY_VISUAL_SNAP_DISTANCE;
 
+    // Alert 상태에서 마지막 목격 위치로 이동하다가
+    // 벽에 막히거나 너무 오래 걸리면 현재 위치에서 수색으로 전환한다.
+    constexpr float ENEMY_ALERT_CHASE_STUCK_TIME = 0.85f;
+    constexpr float ENEMY_ALERT_CHASE_TIMEOUT = 3.0f;
+
     SDL_Rect MakeEnemyRectFromCenter(Vec2 center)
     {
         SDL_Rect rect;
@@ -885,6 +890,19 @@ static void ApplyEnemyGunHit(
     enemy.attackCooldown = enemy.attackInterval;
 }
 
+static void BeginAlertLocalSearchAtCurrentPosition(Enemy& enemy)
+{
+    // 마지막 목격 위치가 벽 너머라서 도달 불가능한 경우, 현재 위치를 수색 기준점으로 바꾼다.
+    enemy.lastKnownPlayerPos = enemy.pos;
+
+    // 이제부터는 "이 위치에서 얼마나 수색했는가"를 재기 위해 초기화한다.
+    enemy.alertLostTimer = 0.0f;
+    enemy.alertSearchBaseAngle = enemy.angle;
+
+    // 막힘 상태도 초기화한다.
+    enemy.stuckTimer = 0.0f;
+}
+
 static bool IsNoiseTaskState(EnemyState state)
 {
     return
@@ -1099,8 +1117,25 @@ static void UpdateAlert(
     if (DistanceSq(enemy.pos, enemy.lastKnownPlayerPos) >
         ARRIVE_DISTANCE * ARRIVE_DISTANCE)
     {
-        MoveEnemyToward(enemy, enemy.lastKnownPlayerPos, walls, dt, true);
-        return;
+        bool reachedLastKnown =
+            MoveEnemyToward(
+                enemy,
+                enemy.lastKnownPlayerPos,
+                walls,
+                dt,
+                true,
+                ENEMY_ALERT_AIM_TURN_SPEED);
+
+        // 아직 정상적으로 추적 중이면 계속 마지막 목격 위치로 이동한다.
+        if (!reachedLastKnown &&
+            enemy.stuckTimer < ENEMY_ALERT_CHASE_STUCK_TIME &&
+            enemy.alertLostTimer < ENEMY_ALERT_CHASE_TIMEOUT)
+        {
+            return;
+        }
+
+        // 도착했거나, 벽에 막혔거나, 너무 오래 추적했다면 현재 위치에서 강한 수색을 시작한다.
+        BeginAlertLocalSearchAtCurrentPosition(enemy);
     }
 
     // 마지막 목격 지점에서 강한 수색
