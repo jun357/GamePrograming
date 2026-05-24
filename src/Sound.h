@@ -15,6 +15,10 @@ struct SoundParticle
 
     // 실제 소음 발생 지점
     Vec2 source = { 0.0f, 0.0f };
+    // 같은 EmitSound()에서 나온 파티클들을 하나의 소음 이벤트로 묶기 위한 값
+    int eventId = 0;
+    // 소음 이벤트가 생성된 뒤 지난 시간
+    float age = 0.0f;
 
     float radius = 2.0f;
 
