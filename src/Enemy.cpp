@@ -6,12 +6,21 @@
 
 namespace
 {
-    constexpr float PI =
-        3.14159265358979323846f;
-    constexpr float DEG_TO_RAD =
-        PI / 180.0f;
+    constexpr float PI = 3.14159265358979323846f;
+    constexpr float DEG_TO_RAD = PI / 180.0f;
     constexpr int DEFAULT_ENEMY_WIDTH = 32;
     constexpr int DEFAULT_ENEMY_HEIGHT = 32;
+    constexpr float ENEMY_MOVE_TURN_SPEED = 160.0f * DEG_TO_RAD;
+    constexpr float ENEMY_INVESTIGATE_TURN_SPEED = 95.0f * DEG_TO_RAD;
+    constexpr float ENEMY_SEARCH_TURN_SPEED = 75.0f * DEG_TO_RAD;
+    constexpr float ENEMY_ALERT_AIM_TURN_SPEED = 180.0f * DEG_TO_RAD;
+    constexpr float ENEMY_ALERT_SEARCH_TURN_SPEED = 90.0f * DEG_TO_RAD;
+    constexpr float NOISE_RETRIGGER_DISTANCE = 80.0f;
+    constexpr float NOISE_RETRIGGER_DISTANCE_SQ = NOISE_RETRIGGER_DISTANCE * NOISE_RETRIGGER_DISTANCE;
+    constexpr float ENEMY_ARRIVE_DISTANCE = 3.0f;
+    constexpr float ENEMY_ARRIVE_DISTANCE_SQ = ENEMY_ARRIVE_DISTANCE * ENEMY_ARRIVE_DISTANCE;
+    constexpr float ENEMY_VISUAL_SNAP_DISTANCE = 0.5f;
+    constexpr float ENEMY_VISUAL_SNAP_DISTANCE_SQ = ENEMY_VISUAL_SNAP_DISTANCE * ENEMY_VISUAL_SNAP_DISTANCE;
 
     SDL_Rect MakeEnemyRectFromCenter(Vec2 center)
     {
@@ -45,6 +54,11 @@ namespace
         enemy.patrolIndex = 0;
         enemy.investigateTarget = { 0.0f, 0.0f };
         enemy.lastKnownPlayerPos = { 0.0f, 0.0f };
+        enemy.returnTarget = { 0.0f, 0.0f };
+        enemy.resumePatrolPos = { 0.0f, 0.0f };
+        enemy.resumePatrolIndex = 0;
+        enemy.resumeAngle = 0.0f;
+        enemy.hasResumePoint = false;
         enemy.stateTimer = 0.0f;
         enemy.searchTimer = 0.0f;
         enemy.hearingEnergy = 0.0f;
@@ -65,6 +79,8 @@ namespace
         enemy.viewDist = 220.0f;
         enemy.rotateSpeed = 0.01f;
         enemy.moveSpeed = 80.0f;
+        enemy.maxHP = 100;
+        enemy.hp = enemy.maxHP;
         enemy.searchDuration = 2.0f;
         enemy.hearingThreshold = 4.0f;
         enemy.attackCooldown = 0.0f;
@@ -81,6 +97,8 @@ namespace
         enemy.viewDist = 250.0f;
         enemy.rotateSpeed = 0.0f;
         enemy.moveSpeed = 70.0f;
+        enemy.maxHP = 100;
+        enemy.hp = enemy.maxHP;
         enemy.searchDuration = 2.0f;
         enemy.hearingThreshold = 4.0f;
         enemy.useHeadSweep = true;
@@ -102,6 +120,8 @@ namespace
         enemy.fov = 75.0f * DEG_TO_RAD;
         enemy.viewDist = 280.0f;
         enemy.rotateSpeed = 0.012f;
+        enemy.maxHP = 200;
+        enemy.hp = enemy.maxHP;
         enemy.moveSpeed = 90.0f;
         enemy.searchDuration = 2.5f;
         enemy.hearingThreshold = 2.5f;
@@ -281,6 +301,104 @@ static bool RectIntersectsAnyWall(
     return false;
 }
 
+static SDL_Rect MakeEnemyCollisionRectAtCenter(
+    const Enemy& enemy,
+    Vec2 center)
+{
+    SDL_Rect rect = enemy.rect;
+
+    rect.x = static_cast<int>(
+        std::round(center.x - rect.w * 0.5f));
+
+    rect.y = static_cast<int>(
+        std::round(center.y - rect.h * 0.5f));
+
+    return rect;
+}
+
+static bool CanEnemyOccupyCenter(
+    const Enemy& enemy,
+    Vec2 center,
+    const std::vector<Wall>& walls)
+{
+    SDL_Rect rect =
+        MakeEnemyCollisionRectAtCenter(enemy, center);
+
+    return !RectIntersectsAnyWall(rect, walls);
+}
+
+static void SetEnemyCenter(Enemy& enemy, Vec2 center)
+{
+    enemy.pos = center;
+    enemy.rect = MakeEnemyCollisionRectAtCenter(enemy, center);
+}
+
+static Vec2 ProjectVec2(Vec2 v, Vec2 onto)
+{
+    float denom = Dot(onto, onto);
+
+    if (denom <= 0.000001f)
+    {
+        return { 0.0f, 0.0f };
+    }
+
+    return onto * (Dot(v, onto) / denom);
+}
+
+static Vec2 MakeFullSpeedSlideDelta(Vec2 delta, Vec2 tangent)
+{
+    Vec2 projected = ProjectVec2(delta, tangent);
+
+    if (LengthSq(projected) <= 0.000001f)
+    {
+        return { 0.0f, 0.0f };
+    }
+
+    return Normalize(projected) * Length(delta);
+}
+
+static void ConsiderEnemyMoveCandidate(
+    const Enemy& enemy,
+    Vec2 startPos,
+    Vec2 target,
+    Vec2 candidateDelta,
+    const std::vector<Wall>& walls,
+    Vec2& bestPos,
+    float& bestScore,
+    bool& foundCandidate)
+{
+    if (LengthSq(candidateDelta) <= 0.000001f)
+    {
+        return;
+    }
+
+    Vec2 candidatePos = startPos + candidateDelta;
+
+    if (!CanEnemyOccupyCenter(enemy, candidatePos, walls))
+    {
+        return;
+    }
+
+    float startDistSq = DistanceSq(startPos, target);
+    float candidateDistSq = DistanceSq(candidatePos, target);
+
+    float score =
+        (startDistSq - candidateDistSq) +
+        LengthSq(candidateDelta) * 0.001f;
+
+    if (score < -0.25f)
+    {
+        return;
+    }
+
+    if (!foundCandidate || score > bestScore)
+    {
+        bestScore = score;
+        bestPos = candidatePos;
+        foundCandidate = true;
+    }
+}
+
 static void FacePoint(Enemy& enemy, Vec2 point)
 {
     Vec2 toTarget = point - enemy.pos;
@@ -292,28 +410,171 @@ static void FacePoint(Enemy& enemy, Vec2 point)
     enemy.angle = WrapAngle(atan2f(toTarget.y, toTarget.x));
 }
 
+static void RotateTowardAngle(
+    Enemy& enemy,
+    float targetAngle,
+    float maxRadiansPerSecond,
+    float dt)
+{
+    float delta = WrapAngle(targetAngle - enemy.angle);
+    float maxStep = maxRadiansPerSecond * dt;
+
+    if (maxStep <= 0.0f)
+    {
+        return;
+    }
+
+    if (fabsf(delta) <= maxStep)
+    {
+        enemy.angle = WrapAngle(targetAngle);
+        return;
+    }
+
+    enemy.angle = WrapAngle(
+        enemy.angle + (delta > 0.0f ? maxStep : -maxStep));
+}
+
+static void FacePointSmooth(
+    Enemy& enemy,
+    Vec2 point,
+    float maxRadiansPerSecond,
+    float dt)
+{
+    Vec2 toTarget = point - enemy.pos;
+
+    if (LengthSq(toTarget) <= 0.0001f)
+    {
+        return;
+    }
+
+    float targetAngle = atan2f(toTarget.y, toTarget.x);
+
+    RotateTowardAngle(
+        enemy,
+        targetAngle,
+        maxRadiansPerSecond,
+        dt);
+}
+
 static bool ShouldKeepFacingFixedWhileInvestigating(const Enemy& enemy)
 {
     return false;
 }
 
+static void SaveReturnPointForInvestigation(
+    Enemy& enemy,
+    EnemyState oldState)
+{
+    if (enemy.hasResumePoint)
+    {
+        return;
+    }
+
+    if (oldState == EnemyState::Dead ||
+        oldState == EnemyState::Alert)
+    {
+        return;
+    }
+
+    if (!enemy.patrolPoints.empty())
+    {
+        enemy.resumePatrolPos = enemy.pos;
+        enemy.resumePatrolIndex = enemy.patrolIndex;
+        enemy.resumeAngle = enemy.angle;
+    }
+    else
+    {
+        enemy.resumePatrolPos = enemy.homePos;
+        enemy.resumePatrolIndex = enemy.patrolIndex;
+        enemy.resumeAngle = enemy.homeAngle;
+    }
+
+    enemy.hasResumePoint = true;
+}
+
+static void SnapEnemyToPointIfVeryClose(Enemy& enemy, Vec2 point)
+{
+    if (DistanceSq(enemy.pos, point) <= ENEMY_VISUAL_SNAP_DISTANCE_SQ)
+    {
+        enemy.pos = point;
+        SyncEnemyRectFromPos(enemy);
+    }
+}
+
+static void RestoreReturnResumeData(Enemy& enemy)
+{
+    if (!enemy.hasResumePoint)
+    {
+        if (enemy.patrolPoints.empty())
+        {
+            SnapEnemyToPointIfVeryClose(enemy, enemy.homePos);
+
+            if (DistanceSq(enemy.pos, enemy.homePos) <=
+                ENEMY_ARRIVE_DISTANCE_SQ)
+            {
+                enemy.angle = enemy.homeAngle;
+                enemy.headSweepOffset = 0.0f;
+            }
+        }
+
+        enemy.stuckTimer = 0.0f;
+        return;
+    }
+
+    if (!enemy.patrolPoints.empty())
+    {
+        if (enemy.resumePatrolIndex >= 0 &&
+            enemy.resumePatrolIndex <
+            static_cast<int>(enemy.patrolPoints.size()))
+        {
+            enemy.patrolIndex = enemy.resumePatrolIndex;
+        }
+
+        SnapEnemyToPointIfVeryClose(enemy, enemy.resumePatrolPos);
+    }
+    else
+    {
+        SnapEnemyToPointIfVeryClose(enemy, enemy.homePos);
+
+        if (DistanceSq(enemy.pos, enemy.homePos) <=
+            ENEMY_ARRIVE_DISTANCE_SQ)
+        {
+            enemy.angle = enemy.homeAngle;
+            enemy.headSweepOffset = 0.0f;
+        }
+    }
+
+    enemy.hasResumePoint = false;
+    enemy.stuckTimer = 0.0f;
+}
+
 static Vec2 GetReturnTarget(const Enemy& enemy)
 {
+    if (enemy.hasResumePoint)
+    {
+        return enemy.resumePatrolPos;
+    }
+
     if (!enemy.patrolPoints.empty())
     {
         int index = enemy.patrolIndex;
+
         if (index < 0 || index >= (int)enemy.patrolPoints.size())
         {
             index = 0;
         }
+
         return enemy.patrolPoints[index];
     }
+
     return enemy.homePos;
 }
 
 static void ChangeEnemyState(Enemy& enemy, EnemyState newState)
 {
-    if (enemy.state == newState)
+    EnemyState oldState = enemy.state;
+
+    if (oldState == newState)
     {
         return;
     }
@@ -329,10 +590,11 @@ static void ChangeEnemyState(Enemy& enemy, EnemyState newState)
         enemy.hasPendingNoise = false;
         enemy.pendingNoiseEnergy = 0.0f;
         enemy.hearingEnergy = 0.0f;
+        enemy.hasResumePoint = false;
         break;
 
     case EnemyState::Investigate:
-        FacePoint(enemy, enemy.investigateTarget);
+        SaveReturnPointForInvestigation(enemy, oldState);
         break;
 
     case EnemyState::Search:
@@ -344,10 +606,10 @@ static void ChangeEnemyState(Enemy& enemy, EnemyState newState)
 
     case EnemyState::Return:
         enemy.returnTarget = GetReturnTarget(enemy);
-        FacePoint(enemy, enemy.returnTarget);
         break;
 
     case EnemyState::Alert:
+        SaveReturnPointForInvestigation(enemy, oldState);
         enemy.heightenedAlert = true;
         enemy.alertLostTimer = 0.0f;
         enemy.alertSearchBaseAngle = enemy.angle;
@@ -403,45 +665,67 @@ static void UpdateHeadSweep(
 static void MoveEnemyBy(
     Enemy& enemy,
     Vec2 delta,
-    const std::vector<Wall>& walls)
+    const std::vector<Wall>& walls,
+    Vec2 target)
 {
-    SDL_Rect next = enemy.rect;
-
-    Vec2 nextPos = enemy.pos;
-    nextPos.x += delta.x;
-    next.x = (int)std::round(nextPos.x - enemy.rect.w * 0.5f);
-
-    if (!RectIntersectsAnyWall(next, walls))
+    if (LengthSq(delta) <= 0.000001f)
     {
-        enemy.pos.x = nextPos.x;
-        enemy.rect.x = next.x;
+        return;
     }
 
-    next = enemy.rect;
-    nextPos = enemy.pos;
-    nextPos.y += delta.y;
-    next.y = (int)std::round(nextPos.y - enemy.rect.h * 0.5f);
+    Vec2 startPos = enemy.pos;
+    Vec2 bestPos = startPos;
 
-    if (!RectIntersectsAnyWall(next, walls))
+    float bestScore = -1.0e30f;
+    bool foundCandidate = false;
+    // 1. 원래 의도한 이동
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, delta, walls, bestPos, bestScore, foundCandidate);
+    // 2. 기존 방식과 유사한 축 분리 이동 후보
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, { delta.x, 0.0f }, walls, bestPos, bestScore, foundCandidate);
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, { 0.0f, delta.y }, walls, bestPos, bestScore, foundCandidate);
+    // 3. full-speed wall slide 후보
+    Vec2 slideX = MakeFullSpeedSlideDelta(delta, { 1.0f, 0.0f });
+    Vec2 slideY = MakeFullSpeedSlideDelta(delta, { 0.0f, 1.0f });
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, slideX, walls, bestPos, bestScore, foundCandidate);
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, slideY, walls, bestPos, bestScore, foundCandidate);
+    // 4. 벽 모서리에서 살짝 틀어 지나가는 후보
+    float stepLen = Length(delta);
+    Vec2 dir = Normalize(delta);
+    const float INV_SQRT2 = 0.70710678118f;
+
+    Vec2 left45 =
     {
-        enemy.pos.y = nextPos.y;
-        enemy.rect.y = next.y;
+        (dir.x - dir.y) * INV_SQRT2,
+        (dir.x + dir.y) * INV_SQRT2
+    };
+
+    Vec2 right45 =
+    {
+        (dir.x + dir.y) * INV_SQRT2,
+        (-dir.x + dir.y) * INV_SQRT2
+    };
+
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, left45 * stepLen, walls, bestPos, bestScore, foundCandidate);
+
+    ConsiderEnemyMoveCandidate(enemy, startPos, target, right45 * stepLen, walls, bestPos, bestScore, foundCandidate);
+
+    if (foundCandidate)
+    {
+        SetEnemyCenter(enemy, bestPos);
     }
 }
-
 static bool MoveEnemyToward(
     Enemy& enemy,
     Vec2 target,
     const std::vector<Wall>& walls,
     float dt,
-    bool updateFacing = true)
+    bool updateFacing = true,
+    float turnSpeed = ENEMY_MOVE_TURN_SPEED)
 {
     Vec2 toTarget = target - enemy.pos;
-    float dist = Length(toTarget);
+    float distSq = LengthSq(toTarget);
 
-    const float ARRIVE_DISTANCE = 3.0f;
-
-    if (dist <= ARRIVE_DISTANCE)
+    if (distSq <= ENEMY_VISUAL_SNAP_DISTANCE_SQ)
     {
         enemy.pos = target;
         SyncEnemyRectFromPos(enemy);
@@ -455,16 +739,19 @@ static bool MoveEnemyToward(
         return false;
     }
 
+    float dist = sqrtf(distSq);
+
     Vec2 before = enemy.pos;
     Vec2 dir = Normalize(toTarget);
 
     if (updateFacing)
     {
-        FacePoint(enemy, target);
+        FacePointSmooth(enemy, target, turnSpeed, dt);
     }
 
     float step = std::min(enemy.moveSpeed * dt, dist);
-    MoveEnemyBy(enemy, dir * step, walls);
+
+    MoveEnemyBy(enemy, dir * step, walls, target);
 
     if (DistanceSq(before, enemy.pos) <= 0.01f)
     {
@@ -475,7 +762,16 @@ static bool MoveEnemyToward(
         enemy.stuckTimer = 0.0f;
     }
 
-    return DistanceSq(target, enemy.pos) <= ARRIVE_DISTANCE * ARRIVE_DISTANCE;
+    float remainingSq = DistanceSq(target, enemy.pos);
+
+    if (remainingSq <= ENEMY_VISUAL_SNAP_DISTANCE_SQ)
+    {
+        enemy.pos = target;
+        SyncEnemyRectFromPos(enemy);
+        enemy.stuckTimer = 0.0f;
+        return true;
+    }
+    return remainingSq <= ENEMY_ARRIVE_DISTANCE_SQ;
 }
 
 // =====================================================
@@ -589,6 +885,33 @@ static void ApplyEnemyGunHit(
     enemy.attackCooldown = enemy.attackInterval;
 }
 
+static bool IsNoiseTaskState(EnemyState state)
+{
+    return
+        state == EnemyState::Investigate ||
+        state == EnemyState::Search ||
+        state == EnemyState::Return;
+}
+
+static bool IsSameNoiseAreaForCurrentTask(
+    const Enemy& enemy,
+    Vec2 noisePos)
+{
+    Vec2 reference = enemy.lastNoisePos;
+
+    if (enemy.state == EnemyState::Investigate)
+    {
+        reference = enemy.investigateTarget;
+    }
+    else if (enemy.hasPendingNoise)
+    {
+        reference = enemy.pendingNoisePos;
+    }
+
+    return DistanceSq(noisePos, reference) <=
+        NOISE_RETRIGGER_DISTANCE_SQ;
+}
+
 static void ConsumePendingNoise(Enemy& enemy, bool alarmActive)
 {
     if (!enemy.hasPendingNoise)
@@ -672,7 +995,8 @@ static void UpdateInvestigate(Enemy& enemy, const std::vector<Wall>& walls, floa
         enemy.investigateTarget,
         walls,
         dt,
-        true);
+        true,
+        ENEMY_INVESTIGATE_TURN_SPEED);
 
     if (arrived || enemy.stateTimer >= enemy.investigateTimeout)
     {
@@ -684,16 +1008,24 @@ static void UpdateSearch(Enemy& enemy, float dt)
 {
     enemy.searchTimer -= dt;
 
-    const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
-
     const float sweepRange = enemy.heightenedAlert
         ? 90.0f * DEG_TO_RAD
         : 45.0f * DEG_TO_RAD;
 
-    const float sweepSpeed = enemy.heightenedAlert ? 4.0f : 3.0f;
+    const float sweepSpeed = enemy.heightenedAlert ? 1.4f : 1.1f;
 
     float sweep = sinf(enemy.stateTimer * sweepSpeed) * sweepRange;
-    enemy.angle = WrapAngle(enemy.searchBaseAngle + sweep);
+    float desiredAngle = WrapAngle(enemy.searchBaseAngle + sweep);
+
+    float turnSpeed = enemy.heightenedAlert
+        ? ENEMY_ALERT_SEARCH_TURN_SPEED
+        : ENEMY_SEARCH_TURN_SPEED;
+
+    RotateTowardAngle(
+        enemy,
+        desiredAngle,
+        turnSpeed,
+        dt);
 
     if (enemy.searchTimer <= 0.0f)
     {
@@ -703,38 +1035,24 @@ static void UpdateSearch(Enemy& enemy, float dt)
 
 static void SnapToReturnTargetAndPatrol(Enemy& enemy)
 {
-    enemy.pos = enemy.returnTarget;
-    SyncEnemyRectFromPos(enemy);
-
-    if (enemy.patrolPoints.empty())
-    {
-        enemy.pos = enemy.homePos;
-        SyncEnemyRectFromPos(enemy);
-        enemy.angle = enemy.homeAngle;
-        enemy.headSweepOffset = 0.0f;
-    }
+    RestoreReturnResumeData(enemy);
 
     ChangeEnemyState(enemy, EnemyState::Patrol);
 }
+
 static void UpdateReturn(Enemy& enemy, const std::vector<Wall>& walls, float dt)
 {
-    bool arrived = MoveEnemyToward(enemy, enemy.returnTarget, walls, dt, true);
+    bool arrived =
+        MoveEnemyToward(enemy, enemy.returnTarget, walls, dt, true);
 
     if (arrived)
     {
-        if (enemy.patrolPoints.empty())
-        {
-            enemy.pos = enemy.homePos;
-            SyncEnemyRectFromPos(enemy);
-            enemy.angle = enemy.homeAngle;
-            enemy.headSweepOffset = 0.0f;
-        }
+        RestoreReturnResumeData(enemy);
 
         ChangeEnemyState(enemy, EnemyState::Patrol);
         return;
     }
-
-    if (enemy.stateTimer >= enemy.returnTimeout || enemy.stuckTimer >= 1.25f)
+    if (enemy.stuckTimer >= 1.25f)
     {
         SnapToReturnTargetAndPatrol(enemy);
     }
@@ -765,7 +1083,7 @@ static void UpdateAlert(
         enemy.lastKnownPlayerPos = playerCenter;
         enemy.alertSearchBaseAngle = enemy.angle;
 
-        FacePoint(enemy, playerCenter);
+        FacePointSmooth(enemy, playerCenter, ENEMY_ALERT_AIM_TURN_SPEED, dt);
 
         if (IsPlayerInAttackRange(enemy, player) &&
             enemy.attackCooldown <= 0.0f)
@@ -786,12 +1104,13 @@ static void UpdateAlert(
     }
 
     // 마지막 목격 지점에서 강한 수색
-    const float sweepRange = 100.0f * DEG_TO_RAD;
-    float sweep = sinf(enemy.alertLostTimer * 4.5f) * sweepRange;
-    enemy.angle = WrapAngle(enemy.alertSearchBaseAngle + sweep);
+    const float sweepRange = 80.0f * DEG_TO_RAD;
+    const float sweepSpeed = 1.2f;
+    float sweep = sinf(enemy.alertLostTimer * sweepSpeed) * sweepRange;
+    float desiredAngle = WrapAngle(enemy.alertSearchBaseAngle + sweep);
+    RotateTowardAngle(enemy, desiredAngle, ENEMY_ALERT_SEARCH_TURN_SPEED, dt);
 
-    // 전역 경보가 아닌 경우에만 일정 시간 뒤 Search로 완화
-    if (!alarmActive && enemy.alertLostTimer >= enemy.alertSearchDuration)
+    if (enemy.alertLostTimer >= enemy.alertSearchDuration)
     {
         ChangeEnemyState(enemy, EnemyState::Search);
     }
@@ -917,6 +1236,12 @@ void NotifyEnemyOfNoise(
     if (alarmActive || enemy.state == EnemyState::Alert)
     {
         enemy.hasPendingNoise = false;
+        return;
+    }
+
+    if (IsNoiseTaskState(enemy.state) &&
+        IsSameNoiseAreaForCurrentTask(enemy, noisePos))
+    {
         return;
     }
 

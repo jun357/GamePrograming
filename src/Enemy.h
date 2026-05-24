@@ -68,6 +68,10 @@ struct Enemy
     Vec2 investigateTarget = { 0.0f, 0.0f };
     Vec2 lastKnownPlayerPos = { 0.0f, 0.0f };
     Vec2 returnTarget = { 0.0f, 0.0f };
+    Vec2 resumePatrolPos = { 0.0f, 0.0f };
+    int resumePatrolIndex = 0;
+    float resumeAngle = 0.0f;
+    bool hasResumePoint = false;
     float stateTimer = 0.0f;
     float searchTimer = 0.0f;
     float searchDuration = 2.0f;
@@ -87,6 +91,12 @@ struct Enemy
     float pendingNoiseEnergy = 0.0f;
 
     bool alerted = false;
+
+    // =====================================================
+    // 체력
+    // =====================================================
+    int maxHP = 100;
+    int hp = 100;
 
     // =====================================================
     // 공격 정보
