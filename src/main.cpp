@@ -22,6 +22,7 @@
 enum GameState
 {
     PLAYING,
+    PAUSED,
     WIN,
     LOSE
 };
@@ -281,6 +282,78 @@ void DrawHealthBar(
     SDL_RenderDrawRect(renderer, &bg);
 }
 
+void DrawAlarmSirenIndicator(
+    SDL_Renderer* renderer,
+    TTF_Font* font)
+{
+    if (!renderer || !font)
+    {
+        return;
+    }
+    // 나중에 사이렌 이미지가 생기면 이 함수 내부만 SDL_RenderCopy로 교체
+    static constexpr const char* ALARM_SIREN_PLACEHOLDER_TEXT = "A";
+
+    static constexpr int ALARM_SIREN_MARGIN_X = 18;
+    static constexpr int ALARM_SIREN_MARGIN_Y = 10;
+
+    SDL_Color alarmColor = { 255, 40, 40, 255 };
+    SDL_Surface* surface = TTF_RenderText_Solid(font, ALARM_SIREN_PLACEHOLDER_TEXT, alarmColor);
+
+    if (!surface)
+    {
+        return;
+    }
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+
+    if (!texture)
+    {
+        SDL_FreeSurface(surface);
+        return;
+    }
+
+    SDL_Rect dst;
+
+    dst.w = surface->w;
+    dst.h = surface->h;
+    dst.x = SCREEN_WIDTH - dst.w - ALARM_SIREN_MARGIN_X;
+    dst.y = ALARM_SIREN_MARGIN_Y;
+
+    SDL_RenderCopy(renderer, texture, NULL, &dst);
+
+    SDL_FreeSurface(surface);
+    SDL_DestroyTexture(texture);
+}
+
+void DrawPauseOverlay(SDL_Renderer* renderer, TTF_Font* font)
+{
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 120);
+    SDL_Rect overlay = { 0, 0, SCREEN_WIDTH, SCREEN_HEIGHT };
+    SDL_RenderFillRect(renderer, &overlay);
+    DrawCenteredText(renderer, font, "PAUSED");
+}
+
+bool ShouldShowAlarmSirenIndicator(
+    bool alarmActive,
+    const std::vector<Enemy>& enemies)
+{
+    if (alarmActive)
+    {
+        return true;
+    }
+
+    for (const auto& enemy : enemies)
+    {
+        if (enemy.state == EnemyState::Alert)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void DrawStageText(SDL_Renderer* renderer, TTF_Font* font, int stage)
 {
     std::string text = "STAGE " + std::to_string(stage);
@@ -365,6 +438,7 @@ int main(int argc, char* args[])
 
     GameState gameState = PLAYING;
     Uint32 stateTimer = 0;
+    Uint32 pauseStartTicks = 0;
 
     float soundTimer = 0.0f;
     float runWallSoundCooldown = 0.0f;
@@ -393,10 +467,32 @@ int main(int argc, char* args[])
         if (dt > 0.05f) dt = 0.05f;
 
         SDL_Event e;
+        
         while (SDL_PollEvent(&e))
         {
             if (e.type == SDL_QUIT)
+            {
                 running = false;
+            }
+            else if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.scancode == SDL_SCANCODE_ESCAPE)
+            {
+                if (gameState == PLAYING)
+                {
+                    gameState = PAUSED;
+                    pauseStartTicks = SDL_GetTicks();
+                }
+                else if (gameState == PAUSED)
+                {
+                    gameState = PLAYING;
+                    Uint32 pausedDuration = SDL_GetTicks() - pauseStartTicks;
+                    // Stage 표시 시간이 pause 중에 흘러가 버리는 것을 방지
+                    if (showStageText)
+                    {
+                        stageTextStart += pausedDuration;
+                    }
+                    pauseStartTicks = 0;
+                }
+            }
         }
 
         auto walls = GetActiveWalls();
@@ -619,7 +715,7 @@ int main(int argc, char* args[])
                 }
             }
         }
-        else
+        else if (gameState == WIN || gameState == LOSE)
         {
             // =========================================
             // 스테이지 리셋
@@ -765,6 +861,19 @@ int main(int argc, char* args[])
             SCREEN_WIDTH,
             PLAYER_HEALTH_BAR_HEIGHT,
             static_cast<float>(playerHP) / static_cast<float>(PLAYER_MAX_HP));
+
+        // =============================================
+        // 경보 / 일시정지 UI
+        // =============================================
+        if (gameState == PAUSED)
+        {
+            DrawPauseOverlay(renderer, font);
+        }
+        if (ShouldShowAlertIcon(alarmActive, enemies))
+        {
+            SDL_Color alertColor = {255, 40, 40, 255};
+            DrawAlarmSirenIndicator(renderer, font);
+        }
 
         // =============================================
         // UI 텍스트
