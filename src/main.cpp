@@ -871,7 +871,6 @@ int main(int argc, char* args[])
         }
         if (ShouldShowAlertIcon(alarmActive, enemies))
         {
-            SDL_Color alertColor = {255, 40, 40, 255};
             DrawAlarmSirenIndicator(renderer, font);
         }
 
