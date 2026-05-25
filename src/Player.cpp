@@ -9,13 +9,19 @@ float GetMoveSpeed(MoveMode mode)
     case SNEAK: return 90.0f;
     case WALK: return 180.0f;
     case RUN: return 300.0f;
+    case INJURED: return 45.0f;
     }
 
     return 180.0f;
 }
 
-MoveMode GetMoveMode(const Uint8* keystate)
+MoveMode GetMoveMode(const Uint8* keystate, float injuredTimer)
 {
+    if (injuredTimer > 0.0f)
+    {
+        return INJURED;
+    }
+
     if (keystate[SDL_SCANCODE_LCTRL] ||
         keystate[SDL_SCANCODE_RCTRL])
     {

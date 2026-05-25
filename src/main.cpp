@@ -34,6 +34,7 @@ Uint32 stageTextStart = 0;
 int displayStage = 1;
 
 const int PLAYER_MAX_HP = 100;
+float injuredTimer = 0.0f;
 
 const int PLAYER_HEALTH_BAR_HEIGHT = 18;
 const int ENEMY_HEALTH_BAR_HEIGHT = 6;
@@ -524,7 +525,7 @@ int main(int argc, char* args[])
 
             const Uint8* key = SDL_GetKeyboardState(NULL);
 
-            MoveMode mode = GetMoveMode(key);
+            MoveMode mode = GetMoveMode(key, injuredTimer);
             float speed = GetMoveSpeed(mode);
 
             float dx = 0, dy = 0;
@@ -548,6 +549,13 @@ int main(int argc, char* args[])
 
             bool hitWall =
                 MovePlayerWithCollisionResult(player, dx, dy, walls);
+
+            //부상 관리
+
+            if (injuredTimer > 0.0f)
+            {
+                injuredTimer -= dt;
+            }
 
             // =========================================
             // 사운드 발생
@@ -644,6 +652,7 @@ int main(int argc, char* args[])
                 alarmActive,
                 std::ref(alarmTriggered),
                 std::ref(playerHP),
+                std::ref(injuredTimer),
                 dt);
             
             soundThread.join();

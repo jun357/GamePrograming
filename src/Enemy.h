@@ -123,6 +123,7 @@ void UpdateEnemies(
     bool alarmActive,
     bool& alarmTriggered,
     int& playerHP,
+    float& injuredTimer,
     float dt);
 
 void DrawFOV(

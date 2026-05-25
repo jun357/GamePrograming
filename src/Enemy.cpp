@@ -878,9 +878,11 @@ static float GetInitialAttackDelay(
 
 static void ApplyEnemyGunHit(
     Enemy& enemy,
-    int& playerHP)
+    int& playerHP,
+    float& injuredTimer)
 {
     playerHP -= enemy.attackDamage;
+    injuredTimer = 0.6f;
 
     if (playerHP < 0)
     {
@@ -1082,6 +1084,7 @@ static void UpdateAlert(
     const std::vector<Wall>& walls,
     bool alarmActive,
     int& playerHP,
+    float& injuredTimer,
     float dt)
 {
     const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
@@ -1106,7 +1109,7 @@ static void UpdateAlert(
         if (IsPlayerInAttackRange(enemy, player) &&
             enemy.attackCooldown <= 0.0f)
         {
-            ApplyEnemyGunHit(enemy, playerHP);
+            ApplyEnemyGunHit(enemy, playerHP, injuredTimer);
         }
 
         return;
@@ -1162,6 +1165,7 @@ void UpdateEnemies(
     bool alarmActive,
     bool& alarmTriggered,
     int& playerHP,
+    float& injuredTimer,
     float dt)
 {
     for (auto& enemy : enemies)
@@ -1221,7 +1225,7 @@ void UpdateEnemies(
             break;
 
         case EnemyState::Alert:
-            UpdateAlert(enemy, player, walls, alarmActive, playerHP, dt);
+            UpdateAlert(enemy, player, walls, alarmActive, playerHP, injuredTimer, dt);
             break;
 
         case EnemyState::Dead:

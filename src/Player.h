@@ -9,12 +9,13 @@ enum MoveMode
 {
     SNEAK,
     WALK,
-    RUN
+    RUN,
+    INJURED
 };
 
 float GetMoveSpeed(MoveMode mode);
 
-MoveMode GetMoveMode(const Uint8* keystate);
+MoveMode GetMoveMode(const Uint8* keystate, float injuredTimer);
 
 void MovePlayer(
     SDL_Rect& player,
