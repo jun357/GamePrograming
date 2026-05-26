@@ -116,7 +116,9 @@ static float ComputeSoundOcclusion(
 static void AddHearingEnergy(
     HearingResult& result,
     Vec2 noisePos,
-    float energy)
+    float energy,
+    SoundKind kind,
+    int eventId)
 {
     if (energy <= 0.0f)
     {
@@ -130,6 +132,8 @@ static void AddHearingEnergy(
     {
         result.strongestEnergy = energy;
         result.noisePos = noisePos;
+        result.kind = kind;
+        result.eventId = eventId;
     }
 }
 
@@ -167,11 +171,13 @@ static void AddDirectSoundEventHearing(
         attenuation *
         occlusion *
         DIRECT_SOUND_ENERGY_SCALE;
-
+    
     AddHearingEnergy(
         result,
         particle.source,
-        energy);
+        energy,
+        particle.kind,
+        particle.eventId);
 }
 
 // =====================================================
@@ -184,7 +190,8 @@ void EmitSound(
     int count,
     float speed,
     float loudness,
-    float life)
+    float life
+    SoundKind kind)
 {
     static int nextSoundEventId = 1;
 
@@ -205,6 +212,7 @@ void EmitSound(
         p.source = origin;
 
         p.eventId = eventId;
+        p.kind = kind;
         p.age = 0.0f;
 
         p.vel = dir * speed;
@@ -570,7 +578,9 @@ void UpdateSoundParticles(
             AddHearingEnergy(
                 result,
                 particle.source,
-                energy);
+                energy,
+                particle.kind,
+                particle.eventId);
         }
     }
 }
