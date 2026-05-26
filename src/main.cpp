@@ -1837,6 +1837,7 @@ int main(int argc, char* args[])
                     70,
                     70,
                     255);
+            }
             else if (enemy.alerted)
             {
                 SDL_SetRenderDrawColor(
