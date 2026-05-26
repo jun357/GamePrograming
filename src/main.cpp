@@ -160,8 +160,6 @@ void ResetWorldItems(std::vector<WorldItem>& items)
 
     // 임시 배치. 벽과 겹치지 않는 위치로 둔다.
     items.push_back({ ItemType::Bottle, {150, 110, 24, 24}, false });
-    items.push_back({ ItemType::Key,    {520, 110, 24, 24}, false });
-    items.push_back({ ItemType::Target, {720, 460, 24, 24}, false });
 }
 
 void TryPickupNearestItem(
