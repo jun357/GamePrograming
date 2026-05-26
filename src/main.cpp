@@ -273,7 +273,8 @@ static void BreakBottle(
         48,
         285.0f,
         2.15f,
-        1.8f);
+        1.8f,
+        SoundKind::Bottle);
 
     bottle.alive = false;
 }
