@@ -914,6 +914,11 @@ static void ChangeEnemyState(Enemy& enemy, EnemyState newState)
 
     case EnemyState::Return:
         enemy.returnTarget = GetReturnTarget(enemy);
+        enemy.investigateTarget = enemy.returnTarget;
+        enemy.investigatePathCount = 0;
+        enemy.investigatePathIndex = 0;
+        enemy.needsInvestigatePathBuild = true;
+        enemy.investigateRouteTimeout = 0.0f;
         break;
 
     case EnemyState::Alert:
@@ -1438,24 +1443,82 @@ static void SnapToReturnTargetAndPatrol(Enemy& enemy)
     ChangeEnemyState(enemy, EnemyState::Patrol);
 }
 
-static void UpdateReturn(Enemy& enemy, const std::vector<Wall>& walls, float dt)
+static void UpdateReturn(
+    Enemy& enemy,
+    const std::vector<Wall>& walls,
+    float dt)
 {
-    bool arrived =
-        MoveEnemyToward(enemy, enemy.returnTarget, walls, dt, true);
+    enemy.investigateTarget = enemy.returnTarget;
 
-    if (arrived)
+    if (enemy.needsInvestigatePathBuild ||
+        enemy.investigatePathCount <= 0)
+    {
+        BuildInvestigatePath(enemy, walls);
+    }
+
+    if (enemy.investigatePathCount <= 0)
+    {
+        bool arrived = MoveEnemyToward(
+            enemy,
+            enemy.returnTarget,
+            walls,
+            dt,
+            true);
+
+        if (arrived)
+        {
+            RestoreReturnResumeData(enemy);
+            ChangeEnemyState(enemy, EnemyState::Patrol);
+        }
+
+        return;
+    }
+
+    if (enemy.investigatePathIndex < 0)
+    {
+        enemy.investigatePathIndex = 0;
+    }
+
+    if (enemy.investigatePathIndex >= enemy.investigatePathCount)
     {
         RestoreReturnResumeData(enemy);
-
         ChangeEnemyState(enemy, EnemyState::Patrol);
         return;
     }
+
+    Vec2 currentTarget =
+        enemy.investigatePath[enemy.investigatePathIndex];
+
+    bool arrived = MoveEnemyToward(
+        enemy,
+        currentTarget,
+        walls,
+        dt,
+        true);
+
+    if (arrived)
+    {
+        if (enemy.investigatePathIndex + 1 <
+            enemy.investigatePathCount)
+        {
+            enemy.investigatePathIndex++;
+            enemy.stuckTimer = 0.0f;
+            return;
+        }
+
+        RestoreReturnResumeData(enemy);
+        ChangeEnemyState(enemy, EnemyState::Patrol);
+        return;
+    }
+
     if (enemy.stuckTimer >= 1.25f)
     {
-        SnapToReturnTargetAndPatrol(enemy);
+        enemy.investigatePathCount = 0;
+        enemy.investigatePathIndex = 0;
+        enemy.needsInvestigatePathBuild = true;
+        enemy.stuckTimer = 0.0f;
     }
 }
-
 static void UpdateAlert(
     Enemy& enemy,
     const SDL_Rect& player,
