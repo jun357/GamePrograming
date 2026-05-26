@@ -190,7 +190,7 @@ void EmitSound(
     int count,
     float speed,
     float loudness,
-    float life
+    float life,
     SoundKind kind)
 {
     static int nextSoundEventId = 1;
