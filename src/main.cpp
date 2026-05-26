@@ -961,6 +961,7 @@ int main(int argc, char* args[])
     int playerHP = PLAYER_MAX_HP;
 
     bool alarmActive = false;
+    int handledBottleSoundEventId = 0;
 
     Uint64 prev = SDL_GetPerformanceCounter();
     Uint64 freq = SDL_GetPerformanceFrequency();
@@ -1204,6 +1205,11 @@ int main(int argc, char* args[])
             {
                 alarmActive = true;
             }
+
+            int bestBottleEnemyIndex = -1;
+            int bestBottleEventId = 0;
+            float bestBottleEnergy = 0.0f;
+            Vec2 bestBottleNoisePos = { 0.0f, 0.0f };
             
             for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
             {
@@ -1212,12 +1218,32 @@ int main(int argc, char* args[])
                 {
                     continue;
                 }
-                
-                NotifyEnemyOfNoise(
-                    enemies[i],
-                    hearing.noisePos,
-                    hearing.energy,
-                    alarmActive);
+                // 병 소음은 유인용이므로 같은 병 이벤트당 가장 강하게 들은 경비 1명만 조사
+                if (hearing.kind == SoundKind::Bottle)
+                {
+                    if (hearing.eventId == handledBottleSoundEventId)
+                    {
+                        continue;
+                    }
+                    if (alarmActive || enemies[i].state == EnemyState::Dead || enemies[i].state == EnemyState::Alert)
+                    {
+                        continue;
+                    }
+                    if (bestBottleEnemyIndex < 0 || hearing.energy > bestBottleEnergy)
+                    {
+                        bestBottleEnemyIndex = static_cast<int>(i);
+                        bestBottleEventId = hearing.eventId;
+                        bestBottleEnergy = hearing.energy;
+                        bestBottleNoisePos = hearing.noisePos;
+                    }
+                    continue;
+                }
+                NotifyEnemyOfNoise(enemies[i], hearing.noisePos, hearing.energy, alarmActive);
+            }
+            if (bestBottleEnemyIndex >= 0)
+            {
+                NotifyEnemyOfNoise(enemies[bestBottleEnemyIndex], bestBottleNoisePos, bestBottleEnergy, alarmActive);
+                handledBottleSoundEventId = bestBottleEventId;
             }
             
             if (alarmTriggered)
@@ -1287,6 +1313,7 @@ int main(int argc, char* args[])
                 runWallSoundCooldown = 0.0f;
 
                 playerHP = PLAYER_MAX_HP;
+                handledBottleSoundEventId = 0;
                 alarmActive = false;
 
                 gameState = PLAYING;
