@@ -899,11 +899,18 @@ static void ChangeEnemyState(Enemy& enemy, EnemyState newState)
         break;
 
     case EnemyState::Search:
-        enemy.searchTimer = enemy.heightenedAlert
-            ? enemy.searchDuration * 1.5f
-            : enemy.searchDuration;
+    {
+        float duration = enemy.searchDuration * 1.6f;
+        float minimumDuration = enemy.heightenedAlert ? 4.5f : 3.8f;
+        if (duration < minimumDuration)
+        {
+            duration = minimumDuration;
+        }
+        enemy.searchTimer = duration;
         enemy.searchBaseAngle = enemy.angle;
+        enemy.stuckTimer = 0.0f;
         break;
+    }
 
     case EnemyState::Return:
         enemy.returnTarget = GetReturnTarget(enemy);
@@ -1373,22 +1380,44 @@ static void UpdateInvestigate(
     }
 }
 
+static float GetSearchLookTargetAngle(const Enemy& enemy)
+{
+    float t = enemy.stateTimer;
+    float base = enemy.searchBaseAngle;
+    if (t < 0.35f)
+    {
+        return WrapAngle(base);
+    }
+    if (t < 1.05f)
+    {
+        return WrapAngle(base + 90.0f * DEG_TO_RAD);
+    }
+    if (t < 1.85f)
+    {
+        return WrapAngle(base + PI);
+    }
+    if (t < 2.55f)
+    {
+        return WrapAngle(base - 90.0f * DEG_TO_RAD);
+    }
+    if (t < 3.35f)
+    {
+        return WrapAngle(base + PI);
+    }
+
+    return WrapAngle(base);
+}
+
 static void UpdateSearch(Enemy& enemy, float dt)
 {
     enemy.searchTimer -= dt;
 
-    const float sweepRange = enemy.heightenedAlert
-        ? 90.0f * DEG_TO_RAD
-        : 45.0f * DEG_TO_RAD;
+    float desiredAngle = GetSearchLookTargetAngle(enemy);
 
-    const float sweepSpeed = enemy.heightenedAlert ? 1.4f : 1.1f;
-
-    float sweep = sinf(enemy.stateTimer * sweepSpeed) * sweepRange;
-    float desiredAngle = WrapAngle(enemy.searchBaseAngle + sweep);
-
-    float turnSpeed = enemy.heightenedAlert
-        ? ENEMY_ALERT_SEARCH_TURN_SPEED
-        : ENEMY_SEARCH_TURN_SPEED;
+    float turnSpeed =
+        enemy.heightenedAlert
+        ? 240.0f * DEG_TO_RAD
+        : 210.0f * DEG_TO_RAD;
 
     RotateTowardAngle(
         enemy,
