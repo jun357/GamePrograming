@@ -66,6 +66,16 @@ struct Enemy
     // 조사 및 수색 정보
     // =====================================================
     Vec2 investigateTarget = { 0.0f, 0.0f };
+
+    // 소음 지점까지 직선 이동이 벽에 막힐 때 사용할 임시 우회 경로.
+    // 최종 소음 지점도 배열의 마지막 point로 들어간다.
+    // 동적 vector를 쓰지 않고 고정 배열을 사용해 enemyThread 성능을 유지한다.
+    Vec2 investigatePath[5] = {};
+    int investigatePathCount = 0;
+    int investigatePathIndex = 0;
+    bool needsInvestigatePathBuild = false;
+    float investigateRouteTimeout = 0.0f;
+
     Vec2 lastKnownPlayerPos = { 0.0f, 0.0f };
     Vec2 returnTarget = { 0.0f, 0.0f };
     Vec2 resumePatrolPos = { 0.0f, 0.0f };
