@@ -1770,6 +1770,10 @@ void DrawFOV(
     std::vector<Wall>& walls,
     const Camera2D& camera)
 {
+    if (enemy.state == EnemyState::Dead)
+    {
+        return;
+    }
     int rays = 120;
 
     float start =
