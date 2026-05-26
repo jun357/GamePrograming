@@ -58,6 +58,15 @@ namespace
         enemy.initialized = false;
         enemy.patrolIndex = 0;
         enemy.investigateTarget = { 0.0f, 0.0f };
+        for (int i = 0; i < 5; ++i)
+        {
+            enemy.investigatePath[i] = { 0.0f, 0.0f };
+        }
+        enemy.investigatePathCount = 0;
+        enemy.investigatePathIndex = 0;
+        enemy.needsInvestigatePathBuild = false;
+        enemy.investigateRouteTimeout = 0.0f;
+        
         enemy.lastKnownPlayerPos = { 0.0f, 0.0f };
         enemy.returnTarget = { 0.0f, 0.0f };
         enemy.resumePatrolPos = { 0.0f, 0.0f };
@@ -332,6 +341,283 @@ static bool CanEnemyOccupyCenter(
     return !RectIntersectsAnyWall(rect, walls);
 }
 
+// =====================================================
+// 소음 조사용 간단 우회 경로 생성
+// =====================================================
+
+static constexpr int INVESTIGATE_PATH_CAPACITY = 5;
+static constexpr float INVESTIGATE_PATH_CLEARANCE = 48.0f;
+static constexpr float INVESTIGATE_PATH_TIMEOUT_MARGIN = 1.5f;
+
+static bool IsSegmentBlockedByWalls(
+    Vec2 from,
+    Vec2 to,
+    const std::vector<Wall>& walls)
+{
+    for (const auto& wall : walls)
+    {
+        if (LineIntersectsRect(
+            from.x,
+            from.y,
+            to.x,
+            to.y,
+            wall.rect))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static const Wall* FindFirstBlockingWall(
+    Vec2 from,
+    Vec2 to,
+    const std::vector<Wall>& walls)
+{
+    for (const auto& wall : walls)
+    {
+        if (LineIntersectsRect(
+            from.x,
+            from.y,
+            to.x,
+            to.y,
+            wall.rect))
+        {
+            return &wall;
+        }
+    }
+
+    return nullptr;
+}
+
+static void MakeBypassCandidatesForWall(
+    const SDL_Rect& wallRect,
+    Vec2 candidates[4])
+{
+    float left =
+        static_cast<float>(wallRect.x) - INVESTIGATE_PATH_CLEARANCE;
+
+    float right =
+        static_cast<float>(wallRect.x + wallRect.w) +
+        INVESTIGATE_PATH_CLEARANCE;
+
+    float top =
+        static_cast<float>(wallRect.y) - INVESTIGATE_PATH_CLEARANCE;
+
+    float bottom =
+        static_cast<float>(wallRect.y + wallRect.h) +
+        INVESTIGATE_PATH_CLEARANCE;
+
+    // waypoint
+    candidates[0] = { left,  top };
+    candidates[1] = { right, top };
+    candidates[2] = { left,  bottom };
+    candidates[3] = { right, bottom };
+}
+
+static bool IsValidInvestigationWaypoint(
+    const Enemy& enemy,
+    Vec2 waypoint,
+    const std::vector<Wall>& walls)
+{
+    return CanEnemyOccupyCenter(enemy, waypoint, walls);
+}
+
+static float CalculateRouteLength(
+    Vec2 start,
+    const Vec2* points,
+    int pointCount)
+{
+    float total = 0.0f;
+    Vec2 prev = start;
+
+    for (int i = 0; i < pointCount; ++i)
+    {
+        total += Distance(prev, points[i]);
+        prev = points[i];
+    }
+
+    return total;
+}
+
+static void StoreInvestigatePath(
+    Enemy& enemy,
+    const Vec2* points,
+    int pointCount)
+{
+    if (pointCount <= 0)
+    {
+        enemy.investigatePathCount = 0;
+        enemy.investigatePathIndex = 0;
+        enemy.investigateRouteTimeout = enemy.investigateTimeout;
+        return;
+    }
+
+    if (pointCount > INVESTIGATE_PATH_CAPACITY)
+    {
+        pointCount = INVESTIGATE_PATH_CAPACITY;
+    }
+
+    for (int i = 0; i < pointCount; ++i)
+    {
+        enemy.investigatePath[i] = points[i];
+    }
+
+    enemy.investigatePathCount = pointCount;
+    enemy.investigatePathIndex = 0;
+
+    float routeLength =
+        CalculateRouteLength(enemy.pos, enemy.investigatePath, pointCount);
+
+    float speed = enemy.moveSpeed;
+    if (speed < 1.0f)
+    {
+        speed = 1.0f;
+    }
+
+    float routeTimeout =
+        routeLength / speed + INVESTIGATE_PATH_TIMEOUT_MARGIN;
+
+    enemy.investigateRouteTimeout =
+        routeTimeout > enemy.investigateTimeout
+        ? routeTimeout
+        : enemy.investigateTimeout;
+}
+
+static void BuildInvestigatePath(
+    Enemy& enemy,
+    const std::vector<Wall>& walls)
+{
+    enemy.needsInvestigatePathBuild = false;
+    enemy.investigatePathCount = 0;
+    enemy.investigatePathIndex = 0;
+    enemy.investigateRouteTimeout = enemy.investigateTimeout;
+
+    Vec2 target = enemy.investigateTarget;
+    if (!IsSegmentBlockedByWalls(enemy.pos, target, walls))
+    {
+        Vec2 directPath[1] = { target };
+        StoreInvestigatePath(enemy, directPath, 1);
+        return;
+    }
+
+    const Wall* blockingWall =
+        FindFirstBlockingWall(enemy.pos, target, walls);
+
+    if (!blockingWall)
+    {
+        Vec2 directPath[1] = { target };
+        StoreInvestigatePath(enemy, directPath, 1);
+        return;
+    }
+
+    Vec2 candidates[4];
+    MakeBypassCandidatesForWall(blockingWall->rect, candidates);
+
+    bool foundPath = false;
+    float bestLength = 0.0f;
+    Vec2 bestPath[3];
+    int bestPathCount = 0;
+
+    // 1차: waypoint 1개로 돌아갈 수 있는 경로를 찾음
+    for (int i = 0; i < 4; ++i)
+    {
+        Vec2 waypoint = candidates[i];
+
+        if (!IsValidInvestigationWaypoint(enemy, waypoint, walls))
+        {
+            continue;
+        }
+
+        if (IsSegmentBlockedByWalls(enemy.pos, waypoint, walls))
+        {
+            continue;
+        }
+
+        if (IsSegmentBlockedByWalls(waypoint, target, walls))
+        {
+            continue;
+        }
+
+        Vec2 path[2] = { waypoint, target };
+        float length = CalculateRouteLength(enemy.pos, path, 2);
+
+        if (!foundPath || length < bestLength)
+        {
+            foundPath = true;
+            bestLength = length;
+            bestPath[0] = waypoint;
+            bestPath[1] = target;
+            bestPathCount = 2;
+        }
+    }
+
+    // 2차: waypoint 2개로 벽의 위/아래를 더 확실히 돌아가는 경로를 찾음
+    for (int i = 0; i < 4; ++i)
+    {
+        Vec2 first = candidates[i];
+
+        if (!IsValidInvestigationWaypoint(enemy, first, walls))
+        {
+            continue;
+        }
+
+        if (IsSegmentBlockedByWalls(enemy.pos, first, walls))
+        {
+            continue;
+        }
+
+        for (int j = 0; j < 4; ++j)
+        {
+            if (i == j)
+            {
+                continue;
+            }
+
+            Vec2 second = candidates[j];
+
+            if (!IsValidInvestigationWaypoint(enemy, second, walls))
+            {
+                continue;
+            }
+
+            if (IsSegmentBlockedByWalls(first, second, walls))
+            {
+                continue;
+            }
+
+            if (IsSegmentBlockedByWalls(second, target, walls))
+            {
+                continue;
+            }
+
+            Vec2 path[3] = { first, second, target };
+            float length = CalculateRouteLength(enemy.pos, path, 3);
+
+            if (!foundPath || length < bestLength)
+            {
+                foundPath = true;
+                bestLength = length;
+                bestPath[0] = first;
+                bestPath[1] = second;
+                bestPath[2] = target;
+                bestPathCount = 3;
+            }
+        }
+    }
+
+    if (foundPath)
+    {
+        StoreInvestigatePath(enemy, bestPath, bestPathCount);
+        return;
+    }
+
+    // fallback: 경로 후보를 못 찾으면 기존처럼 직접 이동
+    Vec2 directPath[1] = { target };
+    StoreInvestigatePath(enemy, directPath, 1);
+}
+
 static void SetEnemyCenter(Enemy& enemy, Vec2 center)
 {
     enemy.pos = center;
@@ -596,10 +882,20 @@ static void ChangeEnemyState(Enemy& enemy, EnemyState newState)
         enemy.pendingNoiseEnergy = 0.0f;
         enemy.hearingEnergy = 0.0f;
         enemy.hasResumePoint = false;
+
+        enemy.investigatePathCount = 0;
+        enemy.investigatePathIndex = 0;
+        enemy.needsInvestigatePathBuild = false;
+        enemy.investigateRouteTimeout = 0.0f;
+
         break;
 
     case EnemyState::Investigate:
         SaveReturnPointForInvestigation(enemy, oldState);
+        enemy.investigatePathCount = 0;
+        enemy.investigatePathIndex = 0;
+        enemy.needsInvestigatePathBuild = true;
+        enemy.investigateRouteTimeout = 0.0f;
         break;
 
     case EnemyState::Search:
@@ -954,6 +1250,11 @@ static void ConsumePendingNoise(Enemy& enemy, bool alarmActive)
     enemy.pendingNoiseEnergy = 0.0f;
     enemy.hasPendingNoise = false;
 
+    enemy.investigatePathCount = 0;
+    enemy.investigatePathIndex = 0;
+    enemy.needsInvestigatePathBuild = true;
+    enemy.investigateRouteTimeout = 0.0f;
+
     ChangeEnemyState(enemy, EnemyState::Investigate);
 }
 
@@ -1008,17 +1309,65 @@ static void UpdatePatrol(Enemy& enemy, const std::vector<Wall>& walls, float dt)
     UpdateHeadSweep(enemy, dt);
 }
 
-static void UpdateInvestigate(Enemy& enemy, const std::vector<Wall>& walls, float dt)
+static void UpdateInvestigate(
+    Enemy& enemy,
+    const std::vector<Wall>& walls,
+    float dt)
 {
+    if (enemy.needsInvestigatePathBuild ||
+        enemy.investigatePathCount <= 0)
+    {
+        BuildInvestigatePath(enemy, walls);
+    }
+
+    if (enemy.investigatePathCount <= 0)
+    {
+        ChangeEnemyState(enemy, EnemyState::Search);
+        return;
+    }
+
+    if (enemy.investigatePathIndex < 0)
+    {
+        enemy.investigatePathIndex = 0;
+    }
+
+    if (enemy.investigatePathIndex >= enemy.investigatePathCount)
+    {
+        ChangeEnemyState(enemy, EnemyState::Search);
+        return;
+    }
+
+    Vec2 currentTarget =
+        enemy.investigatePath[enemy.investigatePathIndex];
+
     bool arrived = MoveEnemyToward(
         enemy,
-        enemy.investigateTarget,
+        currentTarget,
         walls,
         dt,
         true,
         ENEMY_INVESTIGATE_TURN_SPEED);
 
-    if (arrived || enemy.stateTimer >= enemy.investigateTimeout)
+    if (arrived)
+    {
+        if (enemy.investigatePathIndex + 1 <
+            enemy.investigatePathCount)
+        {
+            enemy.investigatePathIndex++;
+            enemy.stuckTimer = 0.0f;
+            return;
+        }
+
+        ChangeEnemyState(enemy, EnemyState::Search);
+        return;
+    }
+
+    float timeout =
+        enemy.investigateRouteTimeout > 0.0f
+        ? enemy.investigateRouteTimeout
+        : enemy.investigateTimeout;
+
+    if (enemy.stateTimer >= timeout)
     {
         ChangeEnemyState(enemy, EnemyState::Search);
     }
@@ -1247,8 +1596,7 @@ void UpdateEnemies(
 
 void RequestEnemyInvestigate(Enemy& enemy, Vec2 targetPos)
 {
-    if (enemy.state == EnemyState::Dead ||
-        enemy.state == EnemyState::Alert)
+    if (enemy.state == EnemyState::Dead || enemy.state == EnemyState::Alert)
     {
         return;
     }
@@ -1257,6 +1605,11 @@ void RequestEnemyInvestigate(Enemy& enemy, Vec2 targetPos)
     enemy.lastNoisePos = targetPos;
     enemy.hasPendingNoise = false;
     enemy.hearingEnergy = 0.0f;
+
+    enemy.investigatePathCount = 0;
+    enemy.investigatePathIndex = 0;
+    enemy.needsInvestigatePathBuild = true;
+    enemy.investigateRouteTimeout = 0.0f;
 
     ChangeEnemyState(enemy, EnemyState::Investigate);
 }
