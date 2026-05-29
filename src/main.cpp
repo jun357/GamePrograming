@@ -206,6 +206,49 @@ void TryPickupNearestItem(
     }
 }
 
+static SDL_Rect MakeItemRectCentered(Vec2 center, int size = 24)
+{
+    return
+    {
+        static_cast<int>(center.x - size * 0.5f),
+        static_cast<int>(center.y - size * 0.5f),
+        size,
+        size
+    };
+}
+
+void ApplyOfficerDeathRewards(
+    std::vector<Enemy>& enemies,
+    std::vector<WorldItem>& items,
+    int& pistolAmmo,
+    int magazineSize)
+{
+    for (auto& enemy : enemies)
+    {
+        if (enemy.kind != EnemyKind::Officer ||
+            enemy.state != EnemyState::Dead ||
+            enemy.officerRewardGiven)
+        {
+            continue;
+        }
+
+        Vec2 dropPos = GetRectCenter(enemy.rect);
+
+        items.push_back(
+        {
+            ItemType::Key,
+            MakeItemRectCentered(dropPos),
+            false
+        });
+
+        pistolAmmo = magazineSize;
+
+        enemy.officerRewardGiven = true;
+
+        std::cout << "Officer dropped key and refilled pistol ammo\n";
+    }
+}
+
 // =====================================================
 // 병 투척
 // =====================================================
@@ -444,6 +487,99 @@ std::vector<Wall> baseWalls;
 std::vector<Wall> anomalyWalls;
 
 // =====================================================
+// 잠긴 문
+// =====================================================
+struct LockedDoor
+{
+    Wall wall;
+    bool opened = false;
+    bool checkpointDoor = true;
+};
+
+std::vector<LockedDoor> lockedDoors;
+
+static constexpr float LOCKED_DOOR_INTERACT_RANGE = 56.0f;
+
+void PrepareLockedDoorSoundWalls(std::vector<LockedDoor>& doors)
+{
+    std::vector<Wall> doorWalls;
+    doorWalls.reserve(doors.size());
+
+    for (const auto& door : doors)
+    {
+        doorWalls.push_back(door.wall);
+    }
+
+    PrepareSoundWalls(doorWalls);
+
+    for (size_t i = 0; i < doors.size(); ++i)
+    {
+        doors[i].wall = doorWalls[i];
+    }
+}
+
+void ResetLockedDoors()
+{
+    lockedDoors.clear();
+    // 테스트용 잠긴 문
+    lockedDoors.push_back(
+    {
+        Wall({ 470, 300, 32, 96 }),
+        false,
+        true
+    });
+
+    PrepareLockedDoorSoundWalls(lockedDoors);
+}
+
+bool TryOpenNearestLockedDoor(
+    const SDL_Rect& player,
+    std::vector<LockedDoor>& doors,
+    Inventory& inventory)
+{
+    Vec2 playerCenter = GetRectCenter(player);
+
+    LockedDoor* nearest = nullptr;
+    float nearestDistSq =
+        LOCKED_DOOR_INTERACT_RANGE * LOCKED_DOOR_INTERACT_RANGE;
+
+    for (auto& door : doors)
+    {
+        if (door.opened)
+        {
+            continue;
+        }
+
+        Vec2 doorCenter = GetRectCenter(door.wall.rect);
+        float distSq = DistanceSqLocal(playerCenter, doorCenter);
+
+        if (distSq <= nearestDistSq)
+        {
+            nearest = &door;
+            nearestDistSq = distSq;
+        }
+    }
+
+    if (!nearest)
+    {
+        return false;
+    }
+
+    if (!inventory.hasKey)
+    {
+        std::cout << "Locked door: key required\n";
+        return false;
+    }
+
+    nearest->opened = true;
+
+    inventory.hasKey = false;
+
+    std::cout << "Unlocked door\n";
+    return true;
+}
+
+// =====================================================
 // 벽 합성 (base + anomaly)
 // =====================================================
 std::vector<Wall> GetActiveWalls()
@@ -452,9 +588,15 @@ std::vector<Wall> GetActiveWalls()
 
     if (anomalyWall)
     {
-        result.insert(result.end(),
-                      anomalyWalls.begin(),
-                      anomalyWalls.end());
+        result.insert(result.end(), anomalyWalls.begin(), anomalyWalls.end());
+    }
+
+    for (const auto& door : lockedDoors)
+    {
+        if (!door.opened)
+        {
+            result.push_back(door.wall);
+        }
     }
 
     return result;
@@ -681,6 +823,40 @@ void DrawWorldItems(
             GetItemLetter(item.type),
             screenRect,
             { 20, 20, 20, 255 });
+    }
+}
+
+void DrawLockedDoors(
+    SDL_Renderer* renderer,
+    TTF_Font* font,
+    const std::vector<LockedDoor>& doors,
+    const Camera2D& camera)
+{
+    for (const auto& door : doors)
+    {
+        SDL_Rect screenRect = camera.WorldToScreenRect(door.wall.rect);
+
+        if (door.opened)
+        {
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 120, 90, 40, 90);
+            SDL_RenderDrawRect(renderer, &screenRect);
+            continue;
+        }
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(renderer, 120, 70, 20, 255);
+        SDL_RenderFillRect(renderer, &screenRect);
+
+        SDL_SetRenderDrawColor(renderer, 255, 220, 120, 255);
+        SDL_RenderDrawRect(renderer, &screenRect);
+
+        DrawTextInRect(
+            renderer,
+            font,
+            "D",
+            screenRect,
+            { 255, 255, 255, 255 });
     }
 }
 
@@ -1375,6 +1551,7 @@ int main(int argc, char* args[])
     PrepareSoundWalls(baseWalls);
 
     PrepareSoundWalls(anomalyWalls);
+    ResetLockedDoors();
     ResetStage(player, enemies);
     ResetWorldItems(worldItems);
     inventory = Inventory{};
@@ -1558,7 +1735,11 @@ int main(int argc, char* args[])
                 bool usedWire = TryWireAttackEnemy(player, enemies, walls);
                 if (!usedWire)
                 {
-                    TryPickupNearestItem(player, worldItems, inventory);
+                    bool openedDoor = TryOpenNearestLockedDoor(player, lockedDoors, inventory);
+                    if (!openedDoor)
+                    {
+                        TryPickupNearestItem(player, worldItems, inventory);
+                    }
                 }
             }
             if (pistolFirePressed)
@@ -1655,6 +1836,7 @@ int main(int argc, char* args[])
             
             soundThread.join();
             enemyThread.join();
+            ApplyOfficerDeathRewards(enemies, worldItems, pistol.ammo, PISTOL_MAGAZINE_SIZE);
             CleanUpParticles(soundParticles, particlesNext);
             
             if (alarmTriggered)
@@ -1756,6 +1938,7 @@ int main(int argc, char* args[])
             {
                 bool wasLose = (gameState == LOSE);
                 ResetStage(player, enemies);
+                ResetLockedDoors();
                 ResetWorldItems(worldItems);
                 if (wasLose)
                 {
@@ -1805,6 +1988,8 @@ int main(int argc, char* args[])
             SDL_Rect r = camera.WorldToScreenRect(w.rect);
             SDL_RenderFillRect(renderer, &r);
         }
+
+        DrawLockedDoors(renderer, uiFont, lockedDoors, camera);
 
         // goals
         SDL_SetRenderDrawColor(renderer, 0,255,0,255);

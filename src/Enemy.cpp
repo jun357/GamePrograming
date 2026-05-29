@@ -78,6 +78,7 @@ namespace
         enemy.hearingEnergy = 0.0f;
         enemy.lastNoisePos = { 0.0f, 0.0f };
         enemy.alerted = false;
+        enemy.officerRewardGiven = false;
         enemy.useHeadSweep = false;
         enemy.headSweepOffset = 0.0f;
         enemy.headSweepMin = -45.0f * DEG_TO_RAD;
