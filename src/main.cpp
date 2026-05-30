@@ -2063,6 +2063,23 @@ int main(int argc, char* args[])
                     70,
                     255);
             }
+            else if (enemy.kind == EnemyKind::Officer && enemy.alerted)
+            {
+                SDL_SetRenderDrawColor(
+                    renderer,
+                    210,
+                    105,
+                    85,
+                    255);
+            else if (enemy.kind == EnemyKind::Officer)
+            {
+                SDL_SetRenderDrawColor(
+                    renderer,
+                    150,
+                    55,
+                    45,
+                    255);
+            }
             else if (enemy.alerted)
             {
                 SDL_SetRenderDrawColor(
