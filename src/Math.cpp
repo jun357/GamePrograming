@@ -27,6 +27,11 @@ Vec2 Vec2::operator/(float s) const
     };
 }
 
+float Vec2::LengthSq() const
+{
+    return x * x + y * y;
+}
+
 // 추가된 복합 대입 연산자들
 Vec2& Vec2::operator+=(const Vec2& o)
 {

@@ -11,6 +11,7 @@ struct Vec2
     Vec2& operator+=(const Vec2& o);
     Vec2& operator-=(const Vec2& o);
     Vec2& operator*=(float s);
+    float LengthSq() const;
 };
 
 float Length(const Vec2& v);

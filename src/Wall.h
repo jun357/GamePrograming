@@ -25,7 +25,7 @@ struct Wall
 
     bool generated = false;
 
-    Wall(SDL_Rect r, int cs = 8)
+    Wall(SDL_Rect r, int cs = 10)
     {
         rect = r;
         cellSize = cs;

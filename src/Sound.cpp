@@ -1,117 +1,12 @@
 #include "Sound.h"
 
 #include <algorithm>
+#include <vector>
+#include <unordered_map>
+#include <functional>
 #include <cmath>
 
 #include "Math.h"
-
-// =====================================================
-// 직접 소음 이벤트 hearing 보정
-// =====================================================
-//
-// 현재 파티클 hearing은 particle.pos가 적 근처를 지나갈 때만 작동한다.
-// 그래서 큰 소리라도 랜덤 파티클 경로가 적을 스치지 않으면
-// 적이 못 듣는 것처럼 보일 수 있다.
-//
-// 아래 보정은 새로 발생한 EmitSound() 이벤트의 source를 기준으로
-// 1회 hearing을 추가한다. 소리 파티클 물리 자체는 그대로 유지한다.
-
-static constexpr float DIRECT_SOUND_BASE_RADIUS = 120.0f;
-static constexpr float DIRECT_SOUND_RADIUS_PER_LOUDNESS = 220.0f;
-static constexpr float DIRECT_SOUND_ENERGY_SCALE = 8.0f;
-
-static constexpr float DIRECT_SOUND_WALL_OCCLUSION = 0.65f;
-static constexpr float DIRECT_SOUND_MIN_OCCLUSION = 0.25f;
-
-static constexpr float NEW_SOUND_EVENT_EPSILON = 0.0001f;
-
-static bool LineIntersect(
-    float x1,
-    float y1,
-    float x2,
-    float y2,
-    float x3,
-    float y3,
-    float x4,
-    float y4)
-{
-    float denom =
-        (y4 - y3) * (x2 - x1) -
-        (x4 - x3) * (y2 - y1);
-
-    if (fabsf(denom) <= 0.000001f)
-    {
-        return false;
-    }
-
-    float ua =
-        ((x4 - x3) * (y1 - y3) -
-         (y4 - y3) * (x1 - x3)) / denom;
-
-    float ub =
-        ((x2 - x1) * (y1 - y3) -
-         (y2 - y1) * (x1 - x3)) / denom;
-
-    return
-        ua >= 0.0f && ua <= 1.0f &&
-        ub >= 0.0f && ub <= 1.0f;
-}
-
-static bool LineIntersectsRect(
-    Vec2 a,
-    Vec2 b,
-    const SDL_Rect& rect)
-{
-    float rx = static_cast<float>(rect.x);
-    float ry = static_cast<float>(rect.y);
-    float rw = static_cast<float>(rect.w);
-    float rh = static_cast<float>(rect.h);
-
-    if (LineIntersect(a.x, a.y, b.x, b.y, rx, ry, rx + rw, ry))
-    {
-        return true;
-    }
-
-    if (LineIntersect(a.x, a.y, b.x, b.y, rx, ry, rx, ry + rh))
-    {
-        return true;
-    }
-
-    if (LineIntersect(a.x, a.y, b.x, b.y, rx + rw, ry, rx + rw, ry + rh))
-    {
-        return true;
-    }
-
-    if (LineIntersect(a.x, a.y, b.x, b.y, rx, ry + rh, rx + rw, ry + rh))
-    {
-        return true;
-    }
-
-    return false;
-}
-
-static float ComputeSoundOcclusion(
-    Vec2 source,
-    Vec2 listener,
-    const std::vector<Wall>& walls)
-{
-    float occlusion = 1.0f;
-
-    for (const auto& wall : walls)
-    {
-        if (LineIntersectsRect(source, listener, wall.rect))
-        {
-            occlusion *= DIRECT_SOUND_WALL_OCCLUSION;
-        }
-    }
-
-    if (occlusion < DIRECT_SOUND_MIN_OCCLUSION)
-    {
-        occlusion = DIRECT_SOUND_MIN_OCCLUSION;
-    }
-
-    return occlusion;
-}
 
 static void AddHearingEnergy(
     HearingResult& result,
@@ -137,49 +32,6 @@ static void AddHearingEnergy(
     }
 }
 
-static void AddDirectSoundEventHearing(
-    const SoundParticle& particle,
-    Vec2 enemyCenter,
-    const std::vector<Wall>& walls,
-    HearingResult& result)
-{
-    float hearRadius =
-        DIRECT_SOUND_BASE_RADIUS +
-        particle.loudness * DIRECT_SOUND_RADIUS_PER_LOUDNESS;
-
-    float distSq = DistanceSq(enemyCenter, particle.source);
-    float hearRadiusSq = hearRadius * hearRadius;
-
-    if (distSq >= hearRadiusSq)
-    {
-        return;
-    }
-
-    float dist = sqrtf(distSq);
-
-    float attenuation =
-        1.0f - ClampFloat(dist / hearRadius, 0.0f, 1.0f);
-
-    float occlusion =
-        ComputeSoundOcclusion(
-            particle.source,
-            enemyCenter,
-            walls);
-
-    float energy =
-        particle.loudness *
-        attenuation *
-        occlusion *
-        DIRECT_SOUND_ENERGY_SCALE;
-    
-    AddHearingEnergy(
-        result,
-        particle.source,
-        energy,
-        particle.kind,
-        particle.eventId);
-}
-
 // =====================================================
 // 사운드 생성
 // =====================================================
@@ -190,7 +42,6 @@ void EmitSound(
     int count,
     float speed,
     float loudness,
-    float life,
     SoundKind kind)
 {
     static int nextSoundEventId = 1;
@@ -219,7 +70,6 @@ void EmitSound(
         p.radius = 2.0f;
         p.mass = 1.0f;
         p.loudness = loudness;
-        p.life = life;
         p.alive = true;
 
         particles.push_back(p);
@@ -240,7 +90,6 @@ void EmitSoundDirectional(
     int count,
     float speed,
     float loudness,
-    float life,
     SoundKind kind)
 {
     static int nextSoundEventId = 1;
@@ -298,7 +147,6 @@ void EmitSoundDirectional(
         p.mass = 1.0f;
 
         p.loudness = loudness;
-        p.life = life;
 
         p.alive = true;
 
@@ -307,7 +155,7 @@ void EmitSoundDirectional(
 }
 
 void GeneratePorousWall(Wall& w, float solidProbability) { w.cells.resize( w.gridWidth * w.gridHeight); for (int y = 0; y < w.gridHeight; y++) { for (int x = 0; x < w.gridWidth; x++) { auto& cell = GetCell(w, x, y); cell.solid = RandomFloat() < solidProbability; } } }
-void EnsureWallGenerated(Wall& w) { if (!w.generated) { GeneratePorousWall(w, 0.65f); w.generated = true; } } 
+void EnsureWallGenerated(Wall& w) { if (!w.generated) { GeneratePorousWall(w, 0.25f); w.generated = true; } } 
 void PrepareSoundWalls(std::vector<Wall>& walls)
 {
     for (auto& w : walls)
@@ -485,167 +333,6 @@ static void ResolveParticleCollision(
     bOut.vel += impulse / bIn.mass;
 }
 
-// =====================================================
-// 업데이트
-// =====================================================
-
-void UpdateSoundParticles(
-    const std::vector<SoundParticle>& read,
-    std::vector<SoundParticle>& write,
-    const std::vector<EnemyAudioSnapshot>& enemies,
-    std::vector<HearingResult>& hearingBuffer,
-    const std::vector<Wall>& walls,
-    float dt)
-{
-    write = read; // 기본 복사 (중요)
-
-    for (auto& result : hearingBuffer)
-    {
-        result = HearingResult{};
-    }
-
-    const int substeps = 4;
-    float stepDt = dt / substeps;
-
-    for (int s = 0; s < substeps; ++s)
-    {
-        // =========================================
-        // 이동
-        // =========================================
-        for (int i = 0; i < static_cast<int>(write.size()); ++i)
-        {
-            if (!write[i].alive)
-            {
-                continue;
-            }
-            
-            write[i].pos += write[i].vel * stepDt;
-            write[i].age += stepDt;
-
-            // =====================================
-            // 🔥 고정 확률 소멸
-            // =====================================
-
-            const float deathRate = 0.5f; // 초당 확률
-
-            if (RandomFloat() < deathRate * stepDt)
-            {
-                write[i].alive = false;
-                continue;
-            }
-        }
-
-        // =========================================
-        // 셀 충돌
-        // =========================================
-        for (int i = 0; i < static_cast<int>(write.size()); ++i)
-        {
-            if (!write[i].alive)
-            {
-                continue;
-            }
-
-            for (const auto& w : walls)
-            {
-                SoundParticle before = write[i];
-
-                ResolveCellCollision(
-                    before,
-                    write[i],
-                    w);
-            }
-        }
-
-        // =========================================
-        // 입자 충돌
-        // =========================================
-        
-        for (int i = 0; i < static_cast<int>(write.size()); ++i)
-        {
-            if (!write[i].alive)
-            {
-                continue;
-            }
-
-            for (int j = i + 1; j < static_cast<int>(write.size()); ++j)
-            {
-                if (!write[j].alive)
-                {
-                    continue;
-                }
-                
-                SoundParticle aBefore = write[i];
-                SoundParticle bBefore = write[j];
-
-                ResolveParticleCollision(
-                    aBefore,
-                    bBefore,
-                    write[i],
-                    write[j]);
-            }
-        }
-    }
-
-    // =============================================
-    // 적 hearing
-    // =============================================
-    for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
-    {
-        const EnemyAudioSnapshot& enemy = enemies[i];
-
-        if (!enemy.alive)
-        {
-            continue;
-        }
-
-        Vec2 enemyCenter =
-        {
-            enemy.rect.x + enemy.rect.w * 0.5f,
-            enemy.rect.y + enemy.rect.h * 0.5f
-        };
-
-        HearingResult& result = hearingBuffer[i];
-
-        std::vector<int> processedEventIds;
-        processedEventIds.reserve(16);
-
-        for (const auto& particle : write)
-        {
-            if (!particle.alive)
-            {
-                continue;
-            }
-
-            // =====================================================
-            // 2. 파티클 위치 기반 hearing
-            // =====================================================
-            float hearRadius = 34.0f + particle.loudness * 10.0f;
-
-            float distSq = DistanceSq(enemyCenter, particle.pos);
-            float hearRadiusSq = hearRadius * hearRadius;
-
-            if (distSq >= hearRadiusSq)
-            {
-                continue;
-            }
-
-            float dist = sqrtf(distSq);
-
-            float attenuation =
-                1.0f - ClampFloat(dist / hearRadius, 0.0f, 1.0f);
-
-            float energy = particle.loudness * attenuation;
-
-            AddHearingEnergy(
-                result,
-                particle.source,
-                energy,
-                particle.kind,
-                particle.eventId);
-        }
-    }
-}
-
 void CleanUpParticles(
     std::vector<SoundParticle>& read,
     std::vector<SoundParticle>& write)
@@ -661,4 +348,242 @@ void CleanUpParticles(
                 return !p.alive;
             }),
         read.end());
+}
+
+constexpr int CELL_SIZE = 64;
+
+struct Cell
+{
+    int x, y;
+
+    bool operator==(const Cell& other) const
+    {
+        return x == other.x && y == other.y;
+    }
+};
+
+struct CellHash
+{
+    size_t operator()(const Cell& c) const
+    {
+        return std::hash<int>()(c.x) ^ (std::hash<int>()(c.y) << 1);
+    }
+};
+
+using ParticleGrid = std::unordered_map<Cell, std::vector<int>, CellHash>;
+
+inline Cell ToCell(const Vec2& p)
+{
+    return Cell{
+        (int)std::floor(p.x / CELL_SIZE),
+        (int)std::floor(p.y / CELL_SIZE)
+    };
+}
+
+void BuildGrid(
+    const std::vector<SoundParticle>& particles,
+    ParticleGrid& grid)
+{
+    grid.clear();
+
+    for (int i = 0; i < (int)particles.size(); ++i)
+    {
+        if (!particles[i].alive)
+            continue;
+
+        Cell c = ToCell(particles[i].pos);
+        grid[c].push_back(i);
+    }
+}
+
+void StepParticles(
+    std::vector<SoundParticle>& particles,
+    const std::vector<Wall>& walls,
+    float stepDt)
+{
+    for (auto& p : particles)
+    {
+        if (!p.alive) continue;
+
+        p.pos += p.vel * stepDt;
+        p.age += stepDt;
+
+        for (const auto& w : walls)
+        {
+            SoundParticle temp = p;
+            ResolveCellCollision(p, temp, w);
+            p = temp;
+        }
+
+        const float deathRate = 0.2f;
+
+        if (RandomFloat() < deathRate * stepDt)
+        {
+            p.alive = false;
+        }
+    }
+}
+
+float ComputeLocalDensityGrid(
+    int index,
+    const std::vector<SoundParticle>& particles,
+    const ParticleGrid& grid)
+{
+    const auto& p = particles[index];
+
+    Cell base = ToCell(p.pos);
+
+    float density = 0.0f;
+
+    for (int dx = -1; dx <= 1; ++dx)
+    for (int dy = -1; dy <= 1; ++dy)
+    {
+        Cell c{ base.x + dx, base.y + dy };
+
+        auto it = grid.find(c);
+        if (it == grid.end())
+            continue;
+
+        for (int j : it->second)
+        {
+            if (j == index) continue;
+
+            const auto& q = particles[j];
+            if (!q.alive) continue;
+
+            // 간단 density 모델
+            float dist2 =
+                (q.pos - p.pos).LengthSq();
+
+            density += 1.0f / (1.0f + dist2);
+        }
+    }
+
+    return density;
+}
+
+std::vector<float> ComputeDensityFieldGrid(
+    const std::vector<SoundParticle>& particles,
+    const ParticleGrid& grid)
+{
+    std::vector<float> density(particles.size(), 0.0f);
+
+    for (int i = 0; i < (int)particles.size(); ++i)
+    {
+        if (!particles[i].alive)
+            continue;
+
+        density[i] = ComputeLocalDensityGrid(i, particles, grid);
+    }
+
+    return density;
+}
+
+void ApplyDensitySurvival(
+    std::vector<SoundParticle>& particles,
+    const std::vector<float>& density)
+{
+    const float dieThreshold = 0.015f;
+
+    for (int i = 0; i < (int)particles.size(); ++i)
+    {
+        if (!particles[i].alive)
+            continue;
+
+        if (density[i] < dieThreshold)
+            particles[i].alive = false;
+    }
+}
+
+void ComputeHearingGrid(
+    const std::vector<SoundParticle>& particles,
+    const std::vector<float>& density,
+    const ParticleGrid& grid,
+    const std::vector<EnemyAudioSnapshot>& enemies,
+    std::vector<HearingResult>& hearingBuffer)
+{
+    for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
+    {
+        const auto& enemy = enemies[i];
+        if (!enemy.alive)
+            continue;
+
+        auto& result = hearingBuffer[i];
+
+        Vec2 enemyCenter =
+        {
+            enemy.rect.x + enemy.rect.w * 0.5f,
+            enemy.rect.y + enemy.rect.h * 0.5f
+        };
+
+        Cell base = ToCell(enemyCenter);
+
+        for (int dx = -2; dx <= 2; ++dx)
+        for (int dy = -2; dy <= 2; ++dy)
+        {
+            Cell c{ base.x + dx, base.y + dy };
+
+            auto it = grid.find(c);
+            if (it == grid.end())
+                continue;
+
+            for (int j : it->second)
+            {
+                const auto& p = particles[j];
+                if (!p.alive) continue;
+
+                // ==============================
+                // enemy 기준 거리 계산
+                // ==============================
+                Vec2 diff = p.pos - enemyCenter;
+                float dist2 = diff.LengthSq();
+
+                // ==============================
+                // 거리 감쇠 (핵심 추가)
+                // ==============================
+                float attenuation = 1.0f / (1.0f + dist2);
+
+                // ==============================
+                // density는 "증폭 factor"
+                // ==============================
+                float energy = density[j] * attenuation * 20;
+
+                AddHearingEnergy(
+                    result,
+                    p.source,
+                    energy,
+                    p.kind,
+                    p.eventId);
+            }
+        }
+    }
+}
+
+void UpdateSoundParticles(
+    const std::vector<SoundParticle>& read,
+    std::vector<SoundParticle>& write,
+    const std::vector<EnemyAudioSnapshot>& enemies,
+    std::vector<HearingResult>& hearingBuffer,
+    const std::vector<Wall>& walls,
+    float dt)
+{
+    write = read;
+    std::fill(hearingBuffer.begin(), hearingBuffer.end(), HearingResult{});
+
+    const int substeps = 4;
+    float stepDt = dt / substeps;
+
+    for (int s = 0; s < substeps; ++s)
+    {
+        StepParticles(write, walls, stepDt);
+    }
+
+    ParticleGrid grid;
+    BuildGrid(write, grid);
+
+    auto density = ComputeDensityFieldGrid(write, grid);
+
+    ApplyDensitySurvival(write, density);
+
+    ComputeHearingGrid(write, density, grid, enemies, hearingBuffer);
 }

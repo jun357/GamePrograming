@@ -35,8 +35,6 @@ struct SoundParticle
 
     float loudness = 1.0f;
 
-    float life = 1.4f;
-
     bool alive = true;
 };
 
@@ -64,7 +62,6 @@ void EmitSound(
     int count,
     float speed,
     float loudness = 1.0f,
-    float life = 1.4f,
     SoundKind kind = SoundKind::Generic);
 
 void EmitSoundDirectional(
@@ -75,7 +72,6 @@ void EmitSoundDirectional(
     int count,
     float speed,
     float loudness = 1.0f,
-    float life = 1.4f,
     SoundKind kind = SoundKind::Generic);
 
 void PrepareSoundWalls(std::vector<Wall>& walls);

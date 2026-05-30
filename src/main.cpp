@@ -313,10 +313,9 @@ static void BreakBottle(
     EmitSound(
         soundParticles,
         bottle.pos,
-        48,
-        285.0f,
+        120,
+        343.0f,
         2.15f,
-        1.8f,
         SoundKind::Bottle);
 
     bottle.alive = false;
@@ -1242,20 +1241,18 @@ bool TryFirePistol(
     EmitSound(
         soundParticles,
         muzzle,
-        200,
-        220.0f,
+        900,
+        343.0f,
         4.0f,
-        2.2f,
         SoundKind::Gunshot);
     EmitSoundDirectional(
         soundParticles,
         muzzle,
         dir,
-        0.785f,
-        200,
-        220.0f,
+        0.5f,
+        100,
+        343.0f,
         4.0f,
-        2.2f,
         SoundKind::Gunshot);
 
     std::cout << "Pistol fired. Ammo: "
@@ -1546,16 +1543,16 @@ int main(int argc, char* args[])
     // base map
     baseWalls =
     {
-        {{200,150,100,200}},
-        {{400,100,50,300}},
-        {{100,400,300,50}}
+        {{200,150,20,200}},
+        {{400,100,20,300}},
+        {{100,400,300,20}}
     };
 
     // anomaly map (extra)
     anomalyWalls =
     {
-        {{500,350,200,40}},
-        {{250,250,40,200}}
+        {{500,350,200,20}},
+        {{250,250,20,200}}
     };
 
     PrepareSoundWalls(baseWalls);
@@ -1699,14 +1696,16 @@ int main(int argc, char* args[])
             float len = sqrtf(dx*dx + dy*dy);
             bool moving = len > 0;
 
+            Vec2 dir = {0, 0};
+
             if (moving)
             {
-                dx /= len;
-                dy /= len;
+                dir.x = dx / len;
+                dir.y = dy / len;
             }
 
-            dx *= speed * dt;
-            dy *= speed * dt;
+            dx = dir.x * speed * dt;
+            dy = dir.y * speed * dt;
 
             bool hitWall =
                 MovePlayerWithCollisionResult(player, dx, dy, walls);
@@ -1766,14 +1765,32 @@ int main(int argc, char* args[])
             {
                 if (mode == RUN)
                 {
-                    if (soundTimer >= 0.04f)
+                    if (soundTimer >= 0.12f)
                     {
-                        EmitSound(soundParticles, playerCenter, 20, 245.0f, 1.05f, 1.35f);
+                        EmitSound(
+                        soundParticles,
+                        playerCenter,
+                        40,
+                        343.0f,
+                        1.0f);
+                        EmitSoundDirectional(
+                        soundParticles,
+                        playerCenter,
+                        dir,
+                        1.4f,
+                        40,
+                        343.0f,
+                        1.0f);
                         soundTimer = 0.0f;
                     }
                     if (hitWall && runWallSoundCooldown <= 0.0f)
                     {
-                        EmitSound(soundParticles, playerCenter, 42, 270.0f, 2.0f, 1.8f);
+                        EmitSound(
+                        soundParticles,
+                        playerCenter,
+                        40,
+                        343.0f,
+                        1.0f);
                         runWallSoundCooldown = 0.35f;
                     }
                 }
@@ -1781,7 +1798,20 @@ int main(int argc, char* args[])
                 {
                     if (soundTimer >= 0.12f)
                     {
-                        EmitSound(soundParticles, playerCenter, 10, 185.0f, 0.35f, 1.0f);
+                        EmitSound(
+                        soundParticles,
+                        playerCenter,
+                        20,
+                        343.0f,
+                        1.0f);
+                        EmitSoundDirectional(
+                        soundParticles,
+                        playerCenter,
+                        dir,
+                        1.4f,
+                        20,
+                        343.0f,
+                        1.0f);
                         soundTimer = 0.0f;
                     }
                 }
