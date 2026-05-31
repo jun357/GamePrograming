@@ -317,6 +317,10 @@ static constexpr float BOTTLE_INITIAL_Z_VELOCITY = 210.0f;
 static constexpr float BOTTLE_GRAVITY = 600.0f;
 static constexpr float BOTTLE_LINEAR_DRAG = 0.25f;
 
+static constexpr int BOTTLE_BREAK_SOUND_PARTICLE_COUNT = 120;
+static constexpr float BOTTLE_BREAK_SOUND_SPEED = 343.0f;
+static constexpr float BOTTLE_BREAK_SOUND_LOUDNESS = 3.0f;
+
 struct BottleProjectile
 {
     Vec2 pos = { 0.0f, 0.0f };
@@ -365,9 +369,9 @@ static void BreakBottle(
     EmitSound(
         soundParticles,
         bottle.pos,
-        120,
-        343.0f,
-        2.15f,
+        BOTTLE_BREAK_SOUND_PARTICLE_COUNT,
+        BOTTLE_BREAK_SOUND_SPEED,
+        BOTTLE_BREAK_SOUND_LOUDNESS,
         SoundKind::Bottle);
 
     bottle.alive = false;
@@ -432,6 +436,8 @@ void UpdateBottleProjectiles(
 
         bottle.flightTime += dt;
 
+        Vec2 previousPos = bottle.pos;
+
         // 수평 이동: 선형 drag
         bottle.vel += bottle.vel * (-BOTTLE_LINEAR_DRAG * dt);
         bottle.pos += bottle.vel * dt;
@@ -474,6 +480,7 @@ void UpdateBottleProjectiles(
         {
             if (CircleIntersectsRect(bottle.pos, bottle.radius, wall.rect))
             {
+                bottle.pos = previousPos;
                 BreakBottle(bottle, soundParticles);
                 break;
             }
@@ -1495,8 +1502,7 @@ void DrawAlarmSirenIndicator(
     {
         return;
     }
-    // 나중에 사이렌 이미지가 생기면 이 함수 내부만 SDL_RenderCopy로 교체
-    static constexpr const char* ALARM_SIREN_PLACEHOLDER_TEXT = "A";
+    static constexpr const char* ALARM_SIREN_PLACEHOLDER_TEXT = "Alert";
 
     static constexpr int ALARM_SIREN_MARGIN_X = 18;
     static constexpr int ALARM_SIREN_MARGIN_Y = 10;
@@ -2027,8 +2033,12 @@ int main(int argc, char* args[])
             }
             if (bestBottleEnemyIndex >= 0)
             {
-                NotifyEnemyOfNoise(enemies[bestBottleEnemyIndex], bestBottleNoisePos, bestBottleEnergy, alarmActive);
-                handledBottleSoundEventId = bestBottleEventId;
+                Enemy& bottleEnemy = enemies[bestBottleEnemyIndex];
+                NotifyEnemyOfNoise(bottleEnemy, bestBottleNoisePos, bestBottleEnergy, alarmActive);
+                if (bottleEnemy.hasPendingNoise)
+                {
+                    handledBottleSoundEventId = bestBottleEventId;
+                }
             }
             
             if (alarmTriggered)
