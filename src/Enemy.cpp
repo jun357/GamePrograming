@@ -82,6 +82,10 @@ namespace
         enemy.shotTrailPending = false;
         enemy.shotTrailStart = { 0.0f, 0.0f };
         enemy.shotTrailEnd = { 0.0f, 0.0f };
+        enemy.bodyDraggable = false;
+        enemy.bodyDragged = false;
+        enemy.bodyHidden = false;
+        enemy.bodyVelocity = { 0.0f, 0.0f };
         enemy.useHeadSweep = false;
         enemy.headSweepOffset = 0.0f;
         enemy.headSweepMin = -45.0f * DEG_TO_RAD;
