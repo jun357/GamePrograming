@@ -1321,7 +1321,6 @@ bool TryFirePistol(
         hasSuppressor ? SUPPRESSED_GUNSHOT_PARTICLE_COUNT : 88,
         hasSuppressor ? SUPPRESSED_GUNSHOT_PARTICLE_SPEED : 360.0f,
         hasSuppressor ? SUPPRESSED_GUNSHOT_LOUDNESS : 4.0f,
-        hasSuppressor ? SUPPRESSED_GUNSHOT_LIFE : 2.2f,
         SoundKind::Gunshot);
 
     std::cout
