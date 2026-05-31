@@ -79,6 +79,9 @@ namespace
         enemy.lastNoisePos = { 0.0f, 0.0f };
         enemy.alerted = false;
         enemy.officerRewardGiven = false;
+        enemy.shotTrailPending = false;
+        enemy.shotTrailStart = { 0.0f, 0.0f };
+        enemy.shotTrailEnd = { 0.0f, 0.0f };
         enemy.useHeadSweep = false;
         enemy.headSweepOffset = 0.0f;
         enemy.headSweepMin = -45.0f * DEG_TO_RAD;
@@ -1185,11 +1188,22 @@ static float GetInitialAttackDelay(
     return enemy.firstShotDelay;
 }
 
+static void QueueEnemyShotTrail(
+    Enemy& enemy,
+    Vec2 targetPos)
+{
+    enemy.shotTrailPending = true;
+    enemy.shotTrailStart = enemy.pos;
+    enemy.shotTrailEnd = targetPos;
+}
+
 static void ApplyEnemyGunHit(
     Enemy& enemy,
+    Vec2 targetPos,
     int& playerHP,
     float& injuredTimer)
 {
+    QueueEnemyShotTrail(enemy, targetPos);
     playerHP -= enemy.attackDamage;
     injuredTimer = 0.6f;
 
@@ -1551,7 +1565,7 @@ static void UpdateAlert(
         if (IsPlayerInAttackRange(enemy, player) &&
             enemy.attackCooldown <= 0.0f)
         {
-            ApplyEnemyGunHit(enemy, playerHP, injuredTimer);
+            ApplyEnemyGunHit(enemy, playerCenter, playerHP, injuredTimer);
         }
 
         return;
