@@ -126,6 +126,14 @@ struct Enemy
     Vec2 shotTrailEnd = { 0.0f, 0.0f };
 
     // =====================================================
+    // 시체 처리
+    // =====================================================
+    bool bodyDraggable = false; 
+    bool bodyDragged = false;
+    bool bodyHidden = false;      // 은닉 구현용
+    Vec2 bodyVelocity = { 0.0f, 0.0f };
+
+    // =====================================================
     // 경보
     // =====================================================
     bool heightenedAlert = false;
