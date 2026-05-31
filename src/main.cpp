@@ -1385,6 +1385,31 @@ void DrawBulletTrails(
     }
 }
 
+void ConsumeEnemyShotTrails(
+    std::vector<Enemy>& enemies,
+    std::vector<BulletTrail>& bulletTrails)
+{
+    for (auto& enemy : enemies)
+    {
+        if (!enemy.shotTrailPending)
+        {
+            continue;
+        }
+
+        bulletTrails.push_back(
+        {
+            enemy.shotTrailStart,
+            enemy.shotTrailEnd,
+            BULLET_TRAIL_LIFETIME,
+            BULLET_TRAIL_LIFETIME
+        });
+
+        enemy.shotTrailPending = false;
+        enemy.shotTrailStart = { 0.0f, 0.0f };
+        enemy.shotTrailEnd = { 0.0f, 0.0f };
+    }
+}
+
 void DrawGunHUD(
     SDL_Renderer* renderer,
     TTF_Font* font,
@@ -1958,6 +1983,7 @@ int main(int argc, char* args[])
             
             soundThread.join();
             enemyThread.join();
+            ConsumeEnemyShotTrails(enemies, bulletTrails);
             ApplyOfficerDeathRewards(enemies, worldItems, pistol.ammo, PISTOL_MAGAZINE_SIZE);
             CleanUpParticles(soundParticles, particlesNext);
             
