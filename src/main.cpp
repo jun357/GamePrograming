@@ -83,6 +83,17 @@ struct WorldItem
     bool picked = false;
 };
 
+struct Equipment
+{
+    bool hasSuppressor = false;
+};
+
+struct SuppressorPickup
+{
+    SDL_Rect rect = { 260, 118, 56, 12 };
+    bool picked = false;
+};
+
 static const char* GetItemLetter(ItemType type)
 {
     switch (type)
@@ -204,6 +215,47 @@ void TryPickupNearestItem(
                   << GetItemLetter(nearest->type)
                   << std::endl;
     }
+}
+
+void ResetSuppressorPickup(
+    SuppressorPickup& suppressor,
+    const Equipment& equipment)
+{
+    suppressor.rect = { 260, 118, 56, 12 };
+
+    suppressor.picked = equipment.hasSuppressor;
+}
+
+bool TryPickupSuppressor(
+    const SDL_Rect& player,
+    SuppressorPickup& suppressor,
+    Equipment& equipment)
+{
+    static constexpr float PICKUP_RANGE = 48.0f;
+    const float pickupRangeSq = PICKUP_RANGE * PICKUP_RANGE;
+
+    if (equipment.hasSuppressor || suppressor.picked)
+    {
+        return false;
+    }
+
+    Vec2 playerCenter = GetRectCenter(player);
+    Vec2 suppressorCenter = GetRectCenter(suppressor.rect);
+
+    float distSq = DistanceSqLocal(playerCenter, suppressorCenter);
+    if (distSq > pickupRangeSq)
+    {
+        return false;
+    }
+
+    equipment.hasSuppressor = true;
+    suppressor.picked = true;
+
+    std::cout
+        << "Picked up suppressor."
+        << std::endl;
+
+    return true;
 }
 
 static SDL_Rect MakeItemRectCentered(Vec2 center, int size = 24)
@@ -809,7 +861,6 @@ void DrawWorldItems(
 
         SDL_Rect screenRect = camera.WorldToScreenRect(item.rect);
 
-        // 이미지가 없으므로 필드 아이템은 작은 흰색 사각형으로 표시
         SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
         SDL_RenderFillRect(renderer, &screenRect);
 
@@ -823,6 +874,26 @@ void DrawWorldItems(
             screenRect,
             { 20, 20, 20, 255 });
     }
+}
+
+void DrawSuppressorPickup(
+    SDL_Renderer* renderer,
+    const SuppressorPickup& suppressor,
+    const Equipment& equipment,
+    const Camera2D& camera)
+{
+    if (equipment.hasSuppressor || suppressor.picked)
+    {
+        return;
+    }
+
+    SDL_Rect screenRect = camera.WorldToScreenRect(suppressor.rect);
+
+    SDL_SetRenderDrawColor(renderer, 120, 120, 120, 255);
+    SDL_RenderFillRect(renderer, &screenRect);
+
+    SDL_SetRenderDrawColor(renderer, 190, 190, 190, 255);
+    SDL_RenderDrawRect(renderer, &screenRect);
 }
 
 void DrawLockedDoors(
@@ -918,6 +989,11 @@ static constexpr int PLAYER_GUN_DAMAGE = 100;
 static constexpr float PLAYER_GUN_RANGE = 760.0f;
 static constexpr float PLAYER_GUN_COOLDOWN = 0.28f;
 static constexpr float BULLET_TRAIL_LIFETIME = 0.08f;
+
+static constexpr int SUPPRESSED_GUNSHOT_PARTICLE_COUNT = 24;
+static constexpr float SUPPRESSED_GUNSHOT_PARTICLE_SPEED = 230.0f;
+static constexpr float SUPPRESSED_GUNSHOT_LOUDNESS = 0.9f;
+static constexpr float SUPPRESSED_GUNSHOT_LIFE = 1.1f;
 
 struct PlayerGunState
 {
@@ -1159,7 +1235,8 @@ bool TryFirePistol(
     const std::vector<Wall>& walls,
     std::vector<SoundParticle>& soundParticles,
     std::vector<BulletTrail>& bulletTrails,
-    PlayerGunState& pistol)
+    PlayerGunState& pistol,
+    bool hasSuppressor)
 {
     if (pistol.ammo <= 0)
     {
@@ -1241,26 +1318,20 @@ bool TryFirePistol(
     EmitSound(
         soundParticles,
         muzzle,
-        900,
-        343.0f,
-        4.0f,
+        hasSuppressor ? SUPPRESSED_GUNSHOT_PARTICLE_COUNT : 88,
+        hasSuppressor ? SUPPRESSED_GUNSHOT_PARTICLE_SPEED : 360.0f,
+        hasSuppressor ? SUPPRESSED_GUNSHOT_LOUDNESS : 4.0f,
+        hasSuppressor ? SUPPRESSED_GUNSHOT_LIFE : 2.2f,
         SoundKind::Gunshot);
-    EmitSoundDirectional(
-        soundParticles,
-        muzzle,
-        dir,
-        0.5f,
-        100,
-        343.0f,
-        4.0f,
-        SoundKind::Gunshot);
-
-    std::cout << "Pistol fired. Ammo: "
-              << pistol.ammo
-              << "/"
-              << PISTOL_MAGAZINE_SIZE
-              << std::endl;
-
+    
+    std::cout
+        << (hasSuppressor
+            ? "Suppressed pistol fired. Ammo: "
+            : "Pistol fired. Ammo: ")
+        << pistol.ammo << "/"
+        << PISTOL_MAGAZINE_SIZE
+        << std::endl;
+    
     return true;
 }
 
@@ -1317,12 +1388,12 @@ void DrawBulletTrails(
 void DrawGunHUD(
     SDL_Renderer* renderer,
     TTF_Font* font,
-    const PlayerGunState& pistol)
+    const PlayerGunState& pistol,
+    bool hasSuppressor)
 {
-    SDL_Rect slot = { 16, 68, 96, 32 };
+    SDL_Rect slot = { 16, 68, 118, 32 };
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-
     SDL_SetRenderDrawColor(renderer, 20, 20, 20, 180);
     SDL_RenderFillRect(renderer, &slot);
 
@@ -1330,10 +1401,13 @@ void DrawGunHUD(
     SDL_RenderDrawRect(renderer, &slot);
 
     std::string text =
-        "P " +
-        std::to_string(pistol.ammo) +
-        "/" +
-        std::to_string(PISTOL_MAGAZINE_SIZE);
+        "P " + std::to_string(pistol.ammo) +
+        "/" + std::to_string(PISTOL_MAGAZINE_SIZE);
+
+    if (hasSuppressor)
+    {
+        text += " S";
+    }
 
     DrawTextInRect(
         renderer,
@@ -1535,6 +1609,8 @@ int main(int argc, char* args[])
 
     std::vector<WorldItem> worldItems;
     Inventory inventory;
+    Equipment equipment;
+    SuppressorPickup suppressorPickup;
     std::vector<BottleProjectile> bottleProjectiles;
 
     PlayerGunState pistol;
@@ -1562,6 +1638,8 @@ int main(int argc, char* args[])
     ResetStage(player, enemies);
     ResetWorldItems(worldItems);
     inventory = Inventory{};
+    equipment = Equipment{};
+    ResetSuppressorPickup(suppressorPickup, equipment);
     bottleProjectiles.clear();
 
     pistol = PlayerGunState{};
@@ -1747,14 +1825,18 @@ int main(int argc, char* args[])
                     bool openedDoor = TryOpenNearestLockedDoor(player, lockedDoors, inventory);
                     if (!openedDoor)
                     {
-                        TryPickupNearestItem(player, worldItems, inventory);
+                        bool pickedSuppressor = TryPickupSuppressor(player, suppressorPickup, equipment);
+                        if (!pickedSuppressor)
+                        {
+                            TryPickupNearestItem(player, worldItems, inventory);
+                        }
                     }
                 }
             }
             if (pistolFirePressed)
             {
                 Vec2 pistolTargetWorld = camera.ScreenToWorldPoint(pistolFireScreenX, pistolFireScreenY);
-                TryFirePistol(player, pistolTargetWorld, enemies, walls, soundParticles, bulletTrails, pistol);
+                TryFirePistol(player, pistolTargetWorld, enemies, walls, soundParticles, bulletTrails, pistol, equipment.hasSuppressor);
             }
             if (bottleThrowPressed)
             {
@@ -1983,6 +2065,7 @@ int main(int argc, char* args[])
                 if (wasLose)
                 {
                     inventory = Inventory{};
+                    equipment = Equipment{};
                     pistol = PlayerGunState{};
                 }
                 else
@@ -2041,6 +2124,9 @@ int main(int argc, char* args[])
         SDL_RenderDrawRect(renderer, &ga);
 
         DrawWorldItems(renderer, uiFont, worldItems, camera);
+        DrawWorldItems(renderer, uiFont, worldItems, camera);
+        DrawSuppressorPickup(renderer, suppressorPickup, equipment, camera);
+        DrawBottleProjectiles(renderer, bottleProjectiles, camera);
         DrawBottleProjectiles(renderer, bottleProjectiles, camera);
 
         // player
@@ -2158,7 +2244,7 @@ int main(int argc, char* args[])
             static_cast<float>(playerHP) / static_cast<float>(PLAYER_MAX_HP));
 
         DrawInventoryHUD(renderer, uiFont, inventory);
-        DrawGunHUD(renderer, uiFont, pistol);
+        DrawGunHUD(renderer, uiFont, pistol, equipment.hasSuppressor);
 
         // =============================================
         // 경보 / 일시정지 UI
