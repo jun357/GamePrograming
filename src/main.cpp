@@ -2124,9 +2124,7 @@ int main(int argc, char* args[])
         SDL_RenderDrawRect(renderer, &ga);
 
         DrawWorldItems(renderer, uiFont, worldItems, camera);
-        DrawWorldItems(renderer, uiFont, worldItems, camera);
         DrawSuppressorPickup(renderer, suppressorPickup, equipment, camera);
-        DrawBottleProjectiles(renderer, bottleProjectiles, camera);
         DrawBottleProjectiles(renderer, bottleProjectiles, camera);
 
         // player
@@ -2157,6 +2155,7 @@ int main(int argc, char* args[])
                     105,
                     85,
                     255);
+            }
             else if (enemy.kind == EnemyKind::Officer)
             {
                 SDL_SetRenderDrawColor(
