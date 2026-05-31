@@ -1323,7 +1323,7 @@ bool TryFirePistol(
         hasSuppressor ? SUPPRESSED_GUNSHOT_LOUDNESS : 4.0f,
         hasSuppressor ? SUPPRESSED_GUNSHOT_LIFE : 2.2f,
         SoundKind::Gunshot);
-    
+
     std::cout
         << (hasSuppressor
             ? "Suppressed pistol fired. Ammo: "
