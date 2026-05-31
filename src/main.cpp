@@ -1016,6 +1016,15 @@ struct BulletTrail
     float maxLife = BULLET_TRAIL_LIFETIME;
 };
 
+static constexpr float BODY_DRAG_INTERACT_RANGE = 56.0f;
+static constexpr float BODY_DRAG_TARGET_DISTANCE = 34.0f;
+
+static constexpr float BODY_DRAG_MASS = 2.5f;
+static constexpr float BODY_DRAG_SPRING = 58.0f;
+static constexpr float BODY_DRAG_DAMPING = 10.0f;
+static constexpr float BODY_DRAG_LINEAR_DRAG = 4.0f;
+static constexpr float BODY_DRAG_MAX_SPEED = 120.0f;
+
 static bool RayIntersectsRectLocal(
     Vec2 origin,
     Vec2 dir,
@@ -1114,6 +1123,281 @@ static bool IsSegmentBlockedByWallsLocal(
     return false;
 }
 
+static Vec2 ClampVec2LengthLocal(Vec2 value, float maxLength)
+{
+    float lenSq = LengthSq(value);
+    float maxSq = maxLength * maxLength;
+
+    if (lenSq <= maxSq || lenSq <= 0.000001f)
+    {
+        return value;
+    }
+
+    return Normalize(value) * maxLength;
+}
+
+static SDL_Rect MakeCorpseRectAtCenter(
+    const Enemy& corpse,
+    Vec2 center)
+{
+    SDL_Rect rect = corpse.rect;
+    rect.x = static_cast<int>(center.x - rect.w * 0.5f);
+    rect.y = static_cast<int>(center.y - rect.h * 0.5f);
+    return rect;
+}
+
+static bool CorpseRectIntersectsAnyWall(
+    const SDL_Rect& rect,
+    const std::vector<Wall>& walls)
+{
+    for (const auto& wall : walls)
+    {
+        if (SDL_HasIntersection(&rect, &wall.rect))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool CanCorpseOccupyCenter(
+    const Enemy& corpse,
+    Vec2 center,
+    const std::vector<Wall>& walls)
+{
+    float halfW = corpse.rect.w * 0.5f;
+    float halfH = corpse.rect.h * 0.5f;
+
+    if (center.x < halfW || center.y < halfH)
+    {
+        return false;
+    }
+
+    if (center.x > WORLD_WIDTH - halfW ||
+        center.y > WORLD_HEIGHT - halfH)
+    {
+        return false;
+    }
+
+    SDL_Rect candidate = MakeCorpseRectAtCenter(corpse, center);
+    return !CorpseRectIntersectsAnyWall(candidate, walls);
+}
+
+static void SetCorpseCenter(
+    Enemy& corpse,
+    Vec2 center)
+{
+    corpse.pos = center;
+    corpse.rect = MakeCorpseRectAtCenter(corpse, center);
+}
+
+static void MoveCorpseWithCollision(
+    Enemy& corpse,
+    Vec2 delta,
+    const std::vector<Wall>& walls)
+{
+    Vec2 center = GetRectCenter(corpse.rect);
+
+    Vec2 tryX = { center.x + delta.x, center.y };
+    if (CanCorpseOccupyCenter(corpse, tryX, walls))
+    {
+        center.x = tryX.x;
+    }
+    else
+    {
+        corpse.bodyVelocity.x = 0.0f;
+    }
+
+    Vec2 tryY = { center.x, center.y + delta.y };
+    if (CanCorpseOccupyCenter(corpse, tryY, walls))
+    {
+        center.y = tryY.y;
+    }
+    else
+    {
+        corpse.bodyVelocity.y = 0.0f;
+    }
+
+    SetCorpseCenter(corpse, center);
+}
+
+static bool IsDraggingBody(
+    const std::vector<Enemy>& enemies,
+    int draggedBodyIndex)
+{
+    if (draggedBodyIndex < 0 ||
+        draggedBodyIndex >= static_cast<int>(enemies.size()))
+    {
+        return false;
+    }
+
+    const Enemy& body = enemies[draggedBodyIndex];
+
+    return
+        body.state == EnemyState::Dead &&
+        body.bodyDraggable &&
+        body.bodyDragged &&
+        !body.bodyHidden;
+}
+
+static int FindNearestDraggableBodyIndex(
+    const SDL_Rect& player,
+    const std::vector<Enemy>& enemies,
+    const std::vector<Wall>& walls)
+{
+    Vec2 playerCenter = GetRectCenter(player);
+
+    int bestIndex = -1;
+    float bestDistSq =
+        BODY_DRAG_INTERACT_RANGE * BODY_DRAG_INTERACT_RANGE;
+
+    for (size_t i = 0; i < enemies.size(); ++i)
+    {
+        const Enemy& enemy = enemies[i];
+
+        if (enemy.state != EnemyState::Dead ||
+            !enemy.bodyDraggable ||
+            enemy.bodyDragged ||
+            enemy.bodyHidden)
+        {
+            continue;
+        }
+
+        Vec2 bodyCenter = GetRectCenter(enemy.rect);
+        float distSq = DistanceSq(playerCenter, bodyCenter);
+
+        if (distSq > bestDistSq)
+        {
+            continue;
+        }
+
+        if (IsSegmentBlockedByWallsLocal(playerCenter, bodyCenter, walls))
+        {
+            continue;
+        }
+
+        bestIndex = static_cast<int>(i);
+        bestDistSq = distSq;
+    }
+
+    return bestIndex;
+}
+
+static void StopDraggingBody(
+    std::vector<Enemy>& enemies,
+    int& draggedBodyIndex)
+{
+    if (draggedBodyIndex >= 0 &&
+        draggedBodyIndex < static_cast<int>(enemies.size()))
+    {
+        enemies[draggedBodyIndex].bodyDragged = false;
+        enemies[draggedBodyIndex].bodyVelocity = { 0.0f, 0.0f };
+    }
+
+    draggedBodyIndex = -1;
+}
+
+static bool ToggleBodyDrag(
+    const SDL_Rect& player,
+    std::vector<Enemy>& enemies,
+    const std::vector<Wall>& walls,
+    int& draggedBodyIndex)
+{
+    if (IsDraggingBody(enemies, draggedBodyIndex))
+    {
+        StopDraggingBody(enemies, draggedBodyIndex);
+        std::cout << "Body dropped" << std::endl;
+        return true;
+    }
+
+    draggedBodyIndex = -1;
+
+    int targetIndex =
+        FindNearestDraggableBodyIndex(player, enemies, walls);
+
+    if (targetIndex < 0)
+    {
+        return false;
+    }
+
+    enemies[targetIndex].bodyDragged = true;
+    enemies[targetIndex].bodyVelocity = { 0.0f, 0.0f };
+    enemies[targetIndex].pos = GetRectCenter(enemies[targetIndex].rect);
+
+    draggedBodyIndex = targetIndex;
+
+    std::cout << "Body dragging started" << std::endl;
+    return true;
+}
+
+static void UpdateDraggedBody(
+    std::vector<Enemy>& enemies,
+    int& draggedBodyIndex,
+    const SDL_Rect& player,
+    Vec2 playerMoveDir,
+    const std::vector<Wall>& walls,
+    float dt)
+{
+    if (!IsDraggingBody(enemies, draggedBodyIndex))
+    {
+        draggedBodyIndex = -1;
+        return;
+    }
+
+    Enemy& body = enemies[draggedBodyIndex];
+
+    Vec2 playerCenter = GetRectCenter(player);
+    Vec2 bodyCenter = GetRectCenter(body.rect);
+
+    Vec2 behindDir = { 0.0f, 0.0f };
+
+    if (LengthSq(playerMoveDir) > 0.000001f)
+    {
+        behindDir = Normalize(playerMoveDir) * -1.0f;
+    }
+    else
+    {
+        Vec2 playerToBody = bodyCenter - playerCenter;
+
+        if (LengthSq(playerToBody) > 0.000001f)
+        {
+            behindDir = Normalize(playerToBody);
+        }
+        else
+        {
+            behindDir = { -1.0f, 0.0f };
+        }
+    }
+
+    Vec2 target =
+        playerCenter + behindDir * BODY_DRAG_TARGET_DISTANCE;
+
+    Vec2 displacement = target - bodyCenter;
+
+    // F = spring * displacement - damping * velocity
+    Vec2 springForce = displacement * BODY_DRAG_SPRING;
+    Vec2 dampingForce = body.bodyVelocity * (-BODY_DRAG_DAMPING);
+    Vec2 forceAccum = springForce + dampingForce;
+
+    Vec2 acceleration = forceAccum * (1.0f / BODY_DRAG_MASS);
+
+    // Euler integration: v += a * dt, p += v * dt
+    body.bodyVelocity += acceleration * dt;
+
+    // linear drag
+    body.bodyVelocity +=
+        body.bodyVelocity * (-BODY_DRAG_LINEAR_DRAG * dt);
+
+    body.bodyVelocity =
+        ClampVec2LengthLocal(body.bodyVelocity, BODY_DRAG_MAX_SPEED);
+
+    MoveCorpseWithCollision(
+        body,
+        body.bodyVelocity * dt,
+        walls);
+}
+
 static void KillEnemySilently(Enemy& enemy)
 {
     enemy.hp = 0;
@@ -1123,6 +1407,10 @@ static void KillEnemySilently(Enemy& enemy)
     enemy.pendingNoiseEnergy = 0.0f;
     enemy.hearingEnergy = 0.0f;
     enemy.attackCooldown = 0.0f;
+    enemy.bodyDraggable = true;
+    enemy.bodyDragged = false;
+    enemy.bodyHidden = false;
+    enemy.bodyVelocity = { 0.0f, 0.0f };
 }
 
 static void KillEnemyByGun(Enemy& enemy)
@@ -1134,6 +1422,10 @@ static void KillEnemyByGun(Enemy& enemy)
     enemy.pendingNoiseEnergy = 0.0f;
     enemy.hearingEnergy = 0.0f;
     enemy.attackCooldown = 0.0f;
+    enemy.bodyDraggable = false;
+    enemy.bodyDragged = false;
+    enemy.bodyHidden = false;
+    enemy.bodyVelocity = { 0.0f, 0.0f };
 }
 
 static bool IsPlayerBehindEnemy(
@@ -1646,6 +1938,8 @@ int main(int argc, char* args[])
     PlayerGunState pistol;
     std::vector<BulletTrail> bulletTrails;
 
+    int draggedBodyIndex = -1;
+
     // base map
     baseWalls =
     {
@@ -1711,6 +2005,7 @@ int main(int argc, char* args[])
 
         SDL_Event e;
         bool interactPressed = false;
+        bool bodyDragPressed = false;
         bool bottleThrowPressed = false;
         int bottleThrowScreenX = 0;
         int bottleThrowScreenY = 0;
@@ -1728,6 +2023,10 @@ int main(int argc, char* args[])
             else if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.scancode == SDL_SCANCODE_E)
             {
                 interactPressed = true;
+            }
+            else if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.scancode == SDL_SCANCODE_F)
+            {
+                bodyDragPressed = true;
             }
             else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT)
             {
@@ -1792,6 +2091,10 @@ int main(int argc, char* args[])
             const Uint8* key = SDL_GetKeyboardState(NULL);
 
             MoveMode mode = GetMoveMode(key, injuredTimer);
+            if (IsDraggingBody(enemies, draggedBodyIndex) && mode != INJURED)
+            {
+                mode = SNEAK;
+            }
             float speed = GetMoveSpeed(mode);
 
             float dx = 0, dy = 0;
@@ -1817,6 +2120,13 @@ int main(int argc, char* args[])
 
             bool hitWall =
                 MovePlayerWithCollisionResult(player, dx, dy, walls);
+
+            if (bodyDragPressed)
+            {
+                ToggleBodyDrag(player, enemies, walls, draggedBodyIndex);
+            }
+            UpdateDraggedBody(enemies, draggedBodyIndex, player, dir, walls, dt);
+            bool draggingBody = IsDraggingBody(enemies, draggedBodyIndex);
 
             //부상 관리
 
@@ -1847,7 +2157,7 @@ int main(int argc, char* args[])
                 pistol.cooldown -= dt;
             }
             UpdateBulletTrails(bulletTrails, dt);
-            if (interactPressed)
+            if (interactPressed && !draggingBody)
             {
                 bool usedWire = TryWireAttackEnemy(player, enemies, walls);
                 if (!usedWire)
@@ -1863,12 +2173,12 @@ int main(int argc, char* args[])
                     }
                 }
             }
-            if (pistolFirePressed)
+            if (pistolFirePressed && !draggingBody)
             {
                 Vec2 pistolTargetWorld = camera.ScreenToWorldPoint(pistolFireScreenX, pistolFireScreenY);
                 TryFirePistol(player, pistolTargetWorld, enemies, walls, soundParticles, bulletTrails, pistol, equipment.hasSuppressor);
             }
-            if (bottleThrowPressed)
+            if (bottleThrowPressed && !draggingBody)
             {
                 Vec2 bottleTargetWorld = camera.ScreenToWorldPoint(bottleThrowScreenX, bottleThrowScreenY);
                 TryThrowBottle(player, bottleTargetWorld, inventory, bottleProjectiles);
@@ -2109,6 +2419,7 @@ int main(int argc, char* args[])
                 }
                 bottleProjectiles.clear();
                 bulletTrails.clear();
+                draggedBodyIndex = -1;
                 soundParticles.clear();
                 soundTimer = 0.0f;
                 runWallSoundCooldown = 0.0f;
@@ -2175,12 +2486,33 @@ int main(int argc, char* args[])
         {
             if (enemy.state == EnemyState::Dead)
             {
-                SDL_SetRenderDrawColor(
-                    renderer,
-                    70,
-                    70,
-                    70,
-                    255);
+                if (enemy.bodyDragged)
+                {
+                    SDL_SetRenderDrawColor(
+                        renderer,
+                        120,
+                        140,
+                        210,
+                        255);
+                }
+                else if (enemy.bodyDraggable)
+                {
+                    SDL_SetRenderDrawColor(
+                        renderer,
+                        80,
+                        120,
+                        170,
+                        255);
+                }
+                else
+                {
+                    SDL_SetRenderDrawColor(
+                        renderer,
+                        105,
+                        55,
+                        55,
+                        255);
+                }
             }
             else if (enemy.kind == EnemyKind::Officer && enemy.alerted)
             {
