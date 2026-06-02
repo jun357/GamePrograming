@@ -121,6 +121,17 @@ struct Enemy
     float firstShotDelay = 0.5f;   // 비경보 상태에서 첫 발까지 대기 시간
     float attackRange = 250.0f;    // 총 사정거리
     int attackDamage = 20;
+    bool shotTrailPending = false;
+    Vec2 shotTrailStart = { 0.0f, 0.0f };
+    Vec2 shotTrailEnd = { 0.0f, 0.0f };
+
+    // =====================================================
+    // 시체 처리
+    // =====================================================
+    bool bodyDraggable = false; 
+    bool bodyDragged = false;
+    bool bodyHidden = false;      // 은닉 구현용
+    Vec2 bodyVelocity = { 0.0f, 0.0f };
 
     // =====================================================
     // 경보

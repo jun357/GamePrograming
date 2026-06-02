@@ -83,6 +83,17 @@ struct WorldItem
     bool picked = false;
 };
 
+struct Equipment
+{
+    bool hasSuppressor = false;
+};
+
+struct SuppressorPickup
+{
+    SDL_Rect rect = { 260, 118, 56, 12 };
+    bool picked = false;
+};
+
 static const char* GetItemLetter(ItemType type)
 {
     switch (type)
@@ -206,6 +217,47 @@ void TryPickupNearestItem(
     }
 }
 
+void ResetSuppressorPickup(
+    SuppressorPickup& suppressor,
+    const Equipment& equipment)
+{
+    suppressor.rect = { 260, 118, 56, 12 };
+
+    suppressor.picked = equipment.hasSuppressor;
+}
+
+bool TryPickupSuppressor(
+    const SDL_Rect& player,
+    SuppressorPickup& suppressor,
+    Equipment& equipment)
+{
+    static constexpr float PICKUP_RANGE = 48.0f;
+    const float pickupRangeSq = PICKUP_RANGE * PICKUP_RANGE;
+
+    if (equipment.hasSuppressor || suppressor.picked)
+    {
+        return false;
+    }
+
+    Vec2 playerCenter = GetRectCenter(player);
+    Vec2 suppressorCenter = GetRectCenter(suppressor.rect);
+
+    float distSq = DistanceSqLocal(playerCenter, suppressorCenter);
+    if (distSq > pickupRangeSq)
+    {
+        return false;
+    }
+
+    equipment.hasSuppressor = true;
+    suppressor.picked = true;
+
+    std::cout
+        << "Picked up suppressor."
+        << std::endl;
+
+    return true;
+}
+
 static SDL_Rect MakeItemRectCentered(Vec2 center, int size = 24)
 {
     return
@@ -265,6 +317,10 @@ static constexpr float BOTTLE_INITIAL_Z_VELOCITY = 210.0f;
 static constexpr float BOTTLE_GRAVITY = 600.0f;
 static constexpr float BOTTLE_LINEAR_DRAG = 0.25f;
 
+static constexpr int BOTTLE_BREAK_SOUND_PARTICLE_COUNT = 120;
+static constexpr float BOTTLE_BREAK_SOUND_SPEED = 343.0f;
+static constexpr float BOTTLE_BREAK_SOUND_LOUDNESS = 3.0f;
+
 struct BottleProjectile
 {
     Vec2 pos = { 0.0f, 0.0f };
@@ -313,9 +369,9 @@ static void BreakBottle(
     EmitSound(
         soundParticles,
         bottle.pos,
-        120,
-        343.0f,
-        2.15f,
+        BOTTLE_BREAK_SOUND_PARTICLE_COUNT,
+        BOTTLE_BREAK_SOUND_SPEED,
+        BOTTLE_BREAK_SOUND_LOUDNESS,
         SoundKind::Bottle);
 
     bottle.alive = false;
@@ -380,6 +436,8 @@ void UpdateBottleProjectiles(
 
         bottle.flightTime += dt;
 
+        Vec2 previousPos = bottle.pos;
+
         // 수평 이동: 선형 drag
         bottle.vel += bottle.vel * (-BOTTLE_LINEAR_DRAG * dt);
         bottle.pos += bottle.vel * dt;
@@ -422,6 +480,7 @@ void UpdateBottleProjectiles(
         {
             if (CircleIntersectsRect(bottle.pos, bottle.radius, wall.rect))
             {
+                bottle.pos = previousPos;
                 BreakBottle(bottle, soundParticles);
                 break;
             }
@@ -809,7 +868,6 @@ void DrawWorldItems(
 
         SDL_Rect screenRect = camera.WorldToScreenRect(item.rect);
 
-        // 이미지가 없으므로 필드 아이템은 작은 흰색 사각형으로 표시
         SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
         SDL_RenderFillRect(renderer, &screenRect);
 
@@ -823,6 +881,26 @@ void DrawWorldItems(
             screenRect,
             { 20, 20, 20, 255 });
     }
+}
+
+void DrawSuppressorPickup(
+    SDL_Renderer* renderer,
+    const SuppressorPickup& suppressor,
+    const Equipment& equipment,
+    const Camera2D& camera)
+{
+    if (equipment.hasSuppressor || suppressor.picked)
+    {
+        return;
+    }
+
+    SDL_Rect screenRect = camera.WorldToScreenRect(suppressor.rect);
+
+    SDL_SetRenderDrawColor(renderer, 120, 120, 120, 255);
+    SDL_RenderFillRect(renderer, &screenRect);
+
+    SDL_SetRenderDrawColor(renderer, 190, 190, 190, 255);
+    SDL_RenderDrawRect(renderer, &screenRect);
 }
 
 void DrawLockedDoors(
@@ -919,6 +997,11 @@ static constexpr float PLAYER_GUN_RANGE = 760.0f;
 static constexpr float PLAYER_GUN_COOLDOWN = 0.28f;
 static constexpr float BULLET_TRAIL_LIFETIME = 0.08f;
 
+static constexpr int SUPPRESSED_GUNSHOT_PARTICLE_COUNT = 24;
+static constexpr float SUPPRESSED_GUNSHOT_PARTICLE_SPEED = 230.0f;
+static constexpr float SUPPRESSED_GUNSHOT_LOUDNESS = 0.9f;
+static constexpr float SUPPRESSED_GUNSHOT_LIFE = 1.1f;
+
 struct PlayerGunState
 {
     int ammo = PISTOL_MAGAZINE_SIZE;
@@ -932,6 +1015,15 @@ struct BulletTrail
     float life = BULLET_TRAIL_LIFETIME;
     float maxLife = BULLET_TRAIL_LIFETIME;
 };
+
+static constexpr float BODY_DRAG_INTERACT_RANGE = 56.0f;
+static constexpr float BODY_DRAG_TARGET_DISTANCE = 34.0f;
+
+static constexpr float BODY_DRAG_MASS = 2.5f;
+static constexpr float BODY_DRAG_SPRING = 58.0f;
+static constexpr float BODY_DRAG_DAMPING = 10.0f;
+static constexpr float BODY_DRAG_LINEAR_DRAG = 4.0f;
+static constexpr float BODY_DRAG_MAX_SPEED = 120.0f;
 
 static bool RayIntersectsRectLocal(
     Vec2 origin,
@@ -1031,6 +1123,281 @@ static bool IsSegmentBlockedByWallsLocal(
     return false;
 }
 
+static Vec2 ClampVec2LengthLocal(Vec2 value, float maxLength)
+{
+    float lenSq = LengthSq(value);
+    float maxSq = maxLength * maxLength;
+
+    if (lenSq <= maxSq || lenSq <= 0.000001f)
+    {
+        return value;
+    }
+
+    return Normalize(value) * maxLength;
+}
+
+static SDL_Rect MakeCorpseRectAtCenter(
+    const Enemy& corpse,
+    Vec2 center)
+{
+    SDL_Rect rect = corpse.rect;
+    rect.x = static_cast<int>(center.x - rect.w * 0.5f);
+    rect.y = static_cast<int>(center.y - rect.h * 0.5f);
+    return rect;
+}
+
+static bool CorpseRectIntersectsAnyWall(
+    const SDL_Rect& rect,
+    const std::vector<Wall>& walls)
+{
+    for (const auto& wall : walls)
+    {
+        if (SDL_HasIntersection(&rect, &wall.rect))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool CanCorpseOccupyCenter(
+    const Enemy& corpse,
+    Vec2 center,
+    const std::vector<Wall>& walls)
+{
+    float halfW = corpse.rect.w * 0.5f;
+    float halfH = corpse.rect.h * 0.5f;
+
+    if (center.x < halfW || center.y < halfH)
+    {
+        return false;
+    }
+
+    if (center.x > WORLD_WIDTH - halfW ||
+        center.y > WORLD_HEIGHT - halfH)
+    {
+        return false;
+    }
+
+    SDL_Rect candidate = MakeCorpseRectAtCenter(corpse, center);
+    return !CorpseRectIntersectsAnyWall(candidate, walls);
+}
+
+static void SetCorpseCenter(
+    Enemy& corpse,
+    Vec2 center)
+{
+    corpse.pos = center;
+    corpse.rect = MakeCorpseRectAtCenter(corpse, center);
+}
+
+static void MoveCorpseWithCollision(
+    Enemy& corpse,
+    Vec2 delta,
+    const std::vector<Wall>& walls)
+{
+    Vec2 center = GetRectCenter(corpse.rect);
+
+    Vec2 tryX = { center.x + delta.x, center.y };
+    if (CanCorpseOccupyCenter(corpse, tryX, walls))
+    {
+        center.x = tryX.x;
+    }
+    else
+    {
+        corpse.bodyVelocity.x = 0.0f;
+    }
+
+    Vec2 tryY = { center.x, center.y + delta.y };
+    if (CanCorpseOccupyCenter(corpse, tryY, walls))
+    {
+        center.y = tryY.y;
+    }
+    else
+    {
+        corpse.bodyVelocity.y = 0.0f;
+    }
+
+    SetCorpseCenter(corpse, center);
+}
+
+static bool IsDraggingBody(
+    const std::vector<Enemy>& enemies,
+    int draggedBodyIndex)
+{
+    if (draggedBodyIndex < 0 ||
+        draggedBodyIndex >= static_cast<int>(enemies.size()))
+    {
+        return false;
+    }
+
+    const Enemy& body = enemies[draggedBodyIndex];
+
+    return
+        body.state == EnemyState::Dead &&
+        body.bodyDraggable &&
+        body.bodyDragged &&
+        !body.bodyHidden;
+}
+
+static int FindNearestDraggableBodyIndex(
+    const SDL_Rect& player,
+    const std::vector<Enemy>& enemies,
+    const std::vector<Wall>& walls)
+{
+    Vec2 playerCenter = GetRectCenter(player);
+
+    int bestIndex = -1;
+    float bestDistSq =
+        BODY_DRAG_INTERACT_RANGE * BODY_DRAG_INTERACT_RANGE;
+
+    for (size_t i = 0; i < enemies.size(); ++i)
+    {
+        const Enemy& enemy = enemies[i];
+
+        if (enemy.state != EnemyState::Dead ||
+            !enemy.bodyDraggable ||
+            enemy.bodyDragged ||
+            enemy.bodyHidden)
+        {
+            continue;
+        }
+
+        Vec2 bodyCenter = GetRectCenter(enemy.rect);
+        float distSq = DistanceSq(playerCenter, bodyCenter);
+
+        if (distSq > bestDistSq)
+        {
+            continue;
+        }
+
+        if (IsSegmentBlockedByWallsLocal(playerCenter, bodyCenter, walls))
+        {
+            continue;
+        }
+
+        bestIndex = static_cast<int>(i);
+        bestDistSq = distSq;
+    }
+
+    return bestIndex;
+}
+
+static void StopDraggingBody(
+    std::vector<Enemy>& enemies,
+    int& draggedBodyIndex)
+{
+    if (draggedBodyIndex >= 0 &&
+        draggedBodyIndex < static_cast<int>(enemies.size()))
+    {
+        enemies[draggedBodyIndex].bodyDragged = false;
+        enemies[draggedBodyIndex].bodyVelocity = { 0.0f, 0.0f };
+    }
+
+    draggedBodyIndex = -1;
+}
+
+static bool ToggleBodyDrag(
+    const SDL_Rect& player,
+    std::vector<Enemy>& enemies,
+    const std::vector<Wall>& walls,
+    int& draggedBodyIndex)
+{
+    if (IsDraggingBody(enemies, draggedBodyIndex))
+    {
+        StopDraggingBody(enemies, draggedBodyIndex);
+        std::cout << "Body dropped" << std::endl;
+        return true;
+    }
+
+    draggedBodyIndex = -1;
+
+    int targetIndex =
+        FindNearestDraggableBodyIndex(player, enemies, walls);
+
+    if (targetIndex < 0)
+    {
+        return false;
+    }
+
+    enemies[targetIndex].bodyDragged = true;
+    enemies[targetIndex].bodyVelocity = { 0.0f, 0.0f };
+    enemies[targetIndex].pos = GetRectCenter(enemies[targetIndex].rect);
+
+    draggedBodyIndex = targetIndex;
+
+    std::cout << "Body dragging started" << std::endl;
+    return true;
+}
+
+static void UpdateDraggedBody(
+    std::vector<Enemy>& enemies,
+    int& draggedBodyIndex,
+    const SDL_Rect& player,
+    Vec2 playerMoveDir,
+    const std::vector<Wall>& walls,
+    float dt)
+{
+    if (!IsDraggingBody(enemies, draggedBodyIndex))
+    {
+        draggedBodyIndex = -1;
+        return;
+    }
+
+    Enemy& body = enemies[draggedBodyIndex];
+
+    Vec2 playerCenter = GetRectCenter(player);
+    Vec2 bodyCenter = GetRectCenter(body.rect);
+
+    Vec2 behindDir = { 0.0f, 0.0f };
+
+    if (LengthSq(playerMoveDir) > 0.000001f)
+    {
+        behindDir = Normalize(playerMoveDir) * -1.0f;
+    }
+    else
+    {
+        Vec2 playerToBody = bodyCenter - playerCenter;
+
+        if (LengthSq(playerToBody) > 0.000001f)
+        {
+            behindDir = Normalize(playerToBody);
+        }
+        else
+        {
+            behindDir = { -1.0f, 0.0f };
+        }
+    }
+
+    Vec2 target =
+        playerCenter + behindDir * BODY_DRAG_TARGET_DISTANCE;
+
+    Vec2 displacement = target - bodyCenter;
+
+    // F = spring * displacement - damping * velocity
+    Vec2 springForce = displacement * BODY_DRAG_SPRING;
+    Vec2 dampingForce = body.bodyVelocity * (-BODY_DRAG_DAMPING);
+    Vec2 forceAccum = springForce + dampingForce;
+
+    Vec2 acceleration = forceAccum * (1.0f / BODY_DRAG_MASS);
+
+    // Euler integration: v += a * dt, p += v * dt
+    body.bodyVelocity += acceleration * dt;
+
+    // linear drag
+    body.bodyVelocity +=
+        body.bodyVelocity * (-BODY_DRAG_LINEAR_DRAG * dt);
+
+    body.bodyVelocity =
+        ClampVec2LengthLocal(body.bodyVelocity, BODY_DRAG_MAX_SPEED);
+
+    MoveCorpseWithCollision(
+        body,
+        body.bodyVelocity * dt,
+        walls);
+}
+
 static void KillEnemySilently(Enemy& enemy)
 {
     enemy.hp = 0;
@@ -1040,6 +1407,10 @@ static void KillEnemySilently(Enemy& enemy)
     enemy.pendingNoiseEnergy = 0.0f;
     enemy.hearingEnergy = 0.0f;
     enemy.attackCooldown = 0.0f;
+    enemy.bodyDraggable = true;
+    enemy.bodyDragged = false;
+    enemy.bodyHidden = false;
+    enemy.bodyVelocity = { 0.0f, 0.0f };
 }
 
 static void KillEnemyByGun(Enemy& enemy)
@@ -1051,6 +1422,10 @@ static void KillEnemyByGun(Enemy& enemy)
     enemy.pendingNoiseEnergy = 0.0f;
     enemy.hearingEnergy = 0.0f;
     enemy.attackCooldown = 0.0f;
+    enemy.bodyDraggable = false;
+    enemy.bodyDragged = false;
+    enemy.bodyHidden = false;
+    enemy.bodyVelocity = { 0.0f, 0.0f };
 }
 
 static bool IsPlayerBehindEnemy(
@@ -1159,7 +1534,8 @@ bool TryFirePistol(
     const std::vector<Wall>& walls,
     std::vector<SoundParticle>& soundParticles,
     std::vector<BulletTrail>& bulletTrails,
-    PlayerGunState& pistol)
+    PlayerGunState& pistol,
+    bool hasSuppressor)
 {
     if (pistol.ammo <= 0)
     {
@@ -1241,26 +1617,19 @@ bool TryFirePistol(
     EmitSound(
         soundParticles,
         muzzle,
-        900,
-        343.0f,
-        4.0f,
-        SoundKind::Gunshot);
-    EmitSoundDirectional(
-        soundParticles,
-        muzzle,
-        dir,
-        0.5f,
-        100,
-        343.0f,
-        4.0f,
+        hasSuppressor ? SUPPRESSED_GUNSHOT_PARTICLE_COUNT : 88,
+        hasSuppressor ? SUPPRESSED_GUNSHOT_PARTICLE_SPEED : 360.0f,
+        hasSuppressor ? SUPPRESSED_GUNSHOT_LOUDNESS : 4.0f,
         SoundKind::Gunshot);
 
-    std::cout << "Pistol fired. Ammo: "
-              << pistol.ammo
-              << "/"
-              << PISTOL_MAGAZINE_SIZE
-              << std::endl;
-
+    std::cout
+        << (hasSuppressor
+            ? "Suppressed pistol fired. Ammo: "
+            : "Pistol fired. Ammo: ")
+        << pistol.ammo << "/"
+        << PISTOL_MAGAZINE_SIZE
+        << std::endl;
+    
     return true;
 }
 
@@ -1314,15 +1683,40 @@ void DrawBulletTrails(
     }
 }
 
+void ConsumeEnemyShotTrails(
+    std::vector<Enemy>& enemies,
+    std::vector<BulletTrail>& bulletTrails)
+{
+    for (auto& enemy : enemies)
+    {
+        if (!enemy.shotTrailPending)
+        {
+            continue;
+        }
+
+        bulletTrails.push_back(
+        {
+            enemy.shotTrailStart,
+            enemy.shotTrailEnd,
+            BULLET_TRAIL_LIFETIME,
+            BULLET_TRAIL_LIFETIME
+        });
+
+        enemy.shotTrailPending = false;
+        enemy.shotTrailStart = { 0.0f, 0.0f };
+        enemy.shotTrailEnd = { 0.0f, 0.0f };
+    }
+}
+
 void DrawGunHUD(
     SDL_Renderer* renderer,
     TTF_Font* font,
-    const PlayerGunState& pistol)
+    const PlayerGunState& pistol,
+    bool hasSuppressor)
 {
-    SDL_Rect slot = { 16, 68, 96, 32 };
+    SDL_Rect slot = { 16, 68, 118, 32 };
 
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-
     SDL_SetRenderDrawColor(renderer, 20, 20, 20, 180);
     SDL_RenderFillRect(renderer, &slot);
 
@@ -1330,10 +1724,13 @@ void DrawGunHUD(
     SDL_RenderDrawRect(renderer, &slot);
 
     std::string text =
-        "P " +
-        std::to_string(pistol.ammo) +
-        "/" +
-        std::to_string(PISTOL_MAGAZINE_SIZE);
+        "P " + std::to_string(pistol.ammo) +
+        "/" + std::to_string(PISTOL_MAGAZINE_SIZE);
+
+    if (hasSuppressor)
+    {
+        text += " S";
+    }
 
     DrawTextInRect(
         renderer,
@@ -1397,8 +1794,7 @@ void DrawAlarmSirenIndicator(
     {
         return;
     }
-    // 나중에 사이렌 이미지가 생기면 이 함수 내부만 SDL_RenderCopy로 교체
-    static constexpr const char* ALARM_SIREN_PLACEHOLDER_TEXT = "A";
+    static constexpr const char* ALARM_SIREN_PLACEHOLDER_TEXT = "Alert";
 
     static constexpr int ALARM_SIREN_MARGIN_X = 18;
     static constexpr int ALARM_SIREN_MARGIN_Y = 10;
@@ -1535,10 +1931,14 @@ int main(int argc, char* args[])
 
     std::vector<WorldItem> worldItems;
     Inventory inventory;
+    Equipment equipment;
+    SuppressorPickup suppressorPickup;
     std::vector<BottleProjectile> bottleProjectiles;
 
     PlayerGunState pistol;
     std::vector<BulletTrail> bulletTrails;
+
+    int draggedBodyIndex = -1;
 
     // base map
     baseWalls =
@@ -1562,6 +1962,8 @@ int main(int argc, char* args[])
     ResetStage(player, enemies);
     ResetWorldItems(worldItems);
     inventory = Inventory{};
+    equipment = Equipment{};
+    ResetSuppressorPickup(suppressorPickup, equipment);
     bottleProjectiles.clear();
 
     pistol = PlayerGunState{};
@@ -1603,6 +2005,7 @@ int main(int argc, char* args[])
 
         SDL_Event e;
         bool interactPressed = false;
+        bool bodyDragPressed = false;
         bool bottleThrowPressed = false;
         int bottleThrowScreenX = 0;
         int bottleThrowScreenY = 0;
@@ -1620,6 +2023,10 @@ int main(int argc, char* args[])
             else if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.scancode == SDL_SCANCODE_E)
             {
                 interactPressed = true;
+            }
+            else if (e.type == SDL_KEYDOWN && !e.key.repeat && e.key.keysym.scancode == SDL_SCANCODE_F)
+            {
+                bodyDragPressed = true;
             }
             else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT)
             {
@@ -1684,6 +2091,10 @@ int main(int argc, char* args[])
             const Uint8* key = SDL_GetKeyboardState(NULL);
 
             MoveMode mode = GetMoveMode(key, injuredTimer);
+            if (IsDraggingBody(enemies, draggedBodyIndex) && mode != INJURED)
+            {
+                mode = SNEAK;
+            }
             float speed = GetMoveSpeed(mode);
 
             float dx = 0, dy = 0;
@@ -1709,6 +2120,13 @@ int main(int argc, char* args[])
 
             bool hitWall =
                 MovePlayerWithCollisionResult(player, dx, dy, walls);
+
+            if (bodyDragPressed)
+            {
+                ToggleBodyDrag(player, enemies, walls, draggedBodyIndex);
+            }
+            UpdateDraggedBody(enemies, draggedBodyIndex, player, dir, walls, dt);
+            bool draggingBody = IsDraggingBody(enemies, draggedBodyIndex);
 
             //부상 관리
 
@@ -1739,7 +2157,7 @@ int main(int argc, char* args[])
                 pistol.cooldown -= dt;
             }
             UpdateBulletTrails(bulletTrails, dt);
-            if (interactPressed)
+            if (interactPressed && !draggingBody)
             {
                 bool usedWire = TryWireAttackEnemy(player, enemies, walls);
                 if (!usedWire)
@@ -1747,16 +2165,20 @@ int main(int argc, char* args[])
                     bool openedDoor = TryOpenNearestLockedDoor(player, lockedDoors, inventory);
                     if (!openedDoor)
                     {
-                        TryPickupNearestItem(player, worldItems, inventory);
+                        bool pickedSuppressor = TryPickupSuppressor(player, suppressorPickup, equipment);
+                        if (!pickedSuppressor)
+                        {
+                            TryPickupNearestItem(player, worldItems, inventory);
+                        }
                     }
                 }
             }
-            if (pistolFirePressed)
+            if (pistolFirePressed && !draggingBody)
             {
                 Vec2 pistolTargetWorld = camera.ScreenToWorldPoint(pistolFireScreenX, pistolFireScreenY);
-                TryFirePistol(player, pistolTargetWorld, enemies, walls, soundParticles, bulletTrails, pistol);
+                TryFirePistol(player, pistolTargetWorld, enemies, walls, soundParticles, bulletTrails, pistol, equipment.hasSuppressor);
             }
-            if (bottleThrowPressed)
+            if (bottleThrowPressed && !draggingBody)
             {
                 Vec2 bottleTargetWorld = camera.ScreenToWorldPoint(bottleThrowScreenX, bottleThrowScreenY);
                 TryThrowBottle(player, bottleTargetWorld, inventory, bottleProjectiles);
@@ -1876,6 +2298,7 @@ int main(int argc, char* args[])
             
             soundThread.join();
             enemyThread.join();
+            ConsumeEnemyShotTrails(enemies, bulletTrails);
             ApplyOfficerDeathRewards(enemies, worldItems, pistol.ammo, PISTOL_MAGAZINE_SIZE);
             CleanUpParticles(soundParticles, particlesNext);
             
@@ -1920,8 +2343,12 @@ int main(int argc, char* args[])
             }
             if (bestBottleEnemyIndex >= 0)
             {
-                NotifyEnemyOfNoise(enemies[bestBottleEnemyIndex], bestBottleNoisePos, bestBottleEnergy, alarmActive);
-                handledBottleSoundEventId = bestBottleEventId;
+                Enemy& bottleEnemy = enemies[bestBottleEnemyIndex];
+                NotifyEnemyOfNoise(bottleEnemy, bestBottleNoisePos, bestBottleEnergy, alarmActive);
+                if (bottleEnemy.hasPendingNoise)
+                {
+                    handledBottleSoundEventId = bestBottleEventId;
+                }
             }
             
             if (alarmTriggered)
@@ -1983,6 +2410,7 @@ int main(int argc, char* args[])
                 if (wasLose)
                 {
                     inventory = Inventory{};
+                    equipment = Equipment{};
                     pistol = PlayerGunState{};
                 }
                 else
@@ -1991,6 +2419,7 @@ int main(int argc, char* args[])
                 }
                 bottleProjectiles.clear();
                 bulletTrails.clear();
+                draggedBodyIndex = -1;
                 soundParticles.clear();
                 soundTimer = 0.0f;
                 runWallSoundCooldown = 0.0f;
@@ -2041,6 +2470,7 @@ int main(int argc, char* args[])
         SDL_RenderDrawRect(renderer, &ga);
 
         DrawWorldItems(renderer, uiFont, worldItems, camera);
+        DrawSuppressorPickup(renderer, suppressorPickup, equipment, camera);
         DrawBottleProjectiles(renderer, bottleProjectiles, camera);
 
         // player
@@ -2056,11 +2486,50 @@ int main(int argc, char* args[])
         {
             if (enemy.state == EnemyState::Dead)
             {
+                if (enemy.bodyDragged)
+                {
+                    SDL_SetRenderDrawColor(
+                        renderer,
+                        120,
+                        140,
+                        210,
+                        255);
+                }
+                else if (enemy.bodyDraggable)
+                {
+                    SDL_SetRenderDrawColor(
+                        renderer,
+                        80,
+                        120,
+                        170,
+                        255);
+                }
+                else
+                {
+                    SDL_SetRenderDrawColor(
+                        renderer,
+                        105,
+                        55,
+                        55,
+                        255);
+                }
+            }
+            else if (enemy.kind == EnemyKind::Officer && enemy.alerted)
+            {
                 SDL_SetRenderDrawColor(
                     renderer,
-                    70,
-                    70,
-                    70,
+                    210,
+                    105,
+                    85,
+                    255);
+            }
+            else if (enemy.kind == EnemyKind::Officer)
+            {
+                SDL_SetRenderDrawColor(
+                    renderer,
+                    150,
+                    55,
+                    45,
                     255);
             }
             else if (enemy.alerted)
@@ -2141,7 +2610,7 @@ int main(int argc, char* args[])
             static_cast<float>(playerHP) / static_cast<float>(PLAYER_MAX_HP));
 
         DrawInventoryHUD(renderer, uiFont, inventory);
-        DrawGunHUD(renderer, uiFont, pistol);
+        DrawGunHUD(renderer, uiFont, pistol, equipment.hasSuppressor);
 
         // =============================================
         // 경보 / 일시정지 UI

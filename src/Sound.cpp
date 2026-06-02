@@ -546,7 +546,7 @@ void ComputeHearingGrid(
                 // ==============================
                 // density는 "증폭 factor"
                 // ==============================
-                float energy = density[j] * attenuation * 20;
+                float energy = density[j] * attenuation * 20.0f * p.loudness;
 
                 AddHearingEnergy(
                     result,
