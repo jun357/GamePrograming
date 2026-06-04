@@ -7,6 +7,7 @@
 #include <thread>
 #include <algorithm>
 #include <random>
+#include <string>
 
 #include "Globals.h"
 #include "Math.h"
@@ -15,6 +16,8 @@
 #include "Sound.h"
 #include "Wall.h"
 #include "Camera.h"
+#include "Stage.h"
+#include "Tutorial.h"
 
 // =====================================================
 // 게임 상태
@@ -58,6 +61,9 @@ bool anomalySound = false;
 SDL_Rect goalNormal  = {700, 500, 40, 40};
 SDL_Rect goalAnomaly = {700, 100, 40, 40};
 
+int currentMapWidth = WORLD_WIDTH;
+int currentMapHeight = WORLD_HEIGHT;
+
 // =====================================================
 // 아이템 / 인벤토리
 // =====================================================
@@ -93,6 +99,11 @@ struct SuppressorPickup
     SDL_Rect rect = { 260, 118, 56, 12 };
     bool picked = false;
 };
+
+std::vector<StageEnemySpawnDef> stageEnemySpawns;
+std::vector<StageItemSpawnDef> stageItemSpawns;
+std::vector<StageTutorialTriggerDef> stageTutorialTriggers;
+std::vector<StageTutorialBlockerDef> stageTutorialBlockers;
 
 static const char* GetItemLetter(ItemType type)
 {
@@ -165,12 +176,59 @@ static float DistanceSqLocal(Vec2 a, Vec2 b)
     return dx * dx + dy * dy;
 }
 
+static ItemType ItemTypeFromString(const std::string& text)
+{
+    if (text == "bottle" || text == "Bottle")
+    {
+        return ItemType::Bottle;
+    }
+
+    if (text == "key" || text == "Key")
+    {
+        return ItemType::Key;
+    }
+
+    if (text == "target" ||
+        text == "document" ||
+        text == "Target" ||
+        text == "Document")
+    {
+        return ItemType::Target;
+    }
+
+    return ItemType::Bottle;
+}
+
 void ResetWorldItems(std::vector<WorldItem>& items)
 {
     items.clear();
 
-    // 임시 배치. 벽과 겹치지 않는 위치로 둔다.
-    items.push_back({ ItemType::Bottle, {150, 110, 24, 24}, false });
+    if (!stageItemSpawns.empty())
+    {
+        for (const auto& spawn : stageItemSpawns)
+        {
+            WorldItem item;
+            item.type = ItemTypeFromString(spawn.itemType);
+            item.rect = spawn.rect;
+            item.picked = false;
+
+            items.push_back(item);
+        }
+
+        return;
+    }
+
+    if (stage == 1)
+    {
+        return;
+    }
+
+    WorldItem fallback;
+    fallback.type = ItemType::Bottle;
+    fallback.rect = { 150, 110, 24, 24 };
+    fallback.picked = false;
+
+    items.push_back(fallback);
 }
 
 void TryPickupNearestItem(
@@ -221,8 +279,14 @@ void ResetSuppressorPickup(
     SuppressorPickup& suppressor,
     const Equipment& equipment)
 {
-    suppressor.rect = { 260, 118, 56, 12 };
+    if (stage == 1)
+    {
+        suppressor.rect = { -1000, -1000, 1, 1 };
+        suppressor.picked = true;
+        return;
+    }
 
+    suppressor.rect = { 260, 118, 56, 12 };
     suppressor.picked = equipment.hasSuppressor;
 }
 
@@ -461,16 +525,16 @@ void UpdateBottleProjectiles(
             continue;
         }
 
-        if (bottle.pos.x > WORLD_WIDTH)
+        if (bottle.pos.x > currentMapWidth)
         {
-            bottle.pos.x = static_cast<float>(WORLD_WIDTH);
+            bottle.pos.x = static_cast<float>(currentMapWidth);
             BreakBottle(bottle, soundParticles);
             continue;
         }
 
-        if (bottle.pos.y > WORLD_HEIGHT)
+        if (bottle.pos.y > currentMapHeight)
         {
-            bottle.pos.y = static_cast<float>(WORLD_HEIGHT);
+            bottle.pos.y = static_cast<float>(currentMapHeight);
             BreakBottle(bottle, soundParticles);
             continue;
         }
@@ -543,6 +607,92 @@ void DrawBottleProjectiles(
 // =====================================================
 std::vector<Wall> baseWalls;
 std::vector<Wall> anomalyWalls;
+TutorialController tutorial;
+
+static void ApplyStageMapSetupToGlobals(const StageMapSetup& setup, SDL_Rect& player)
+{
+    player = setup.playerStart;
+
+    baseWalls = setup.baseWalls;
+    anomalyWalls = setup.anomalyWalls;
+
+    goalNormal = setup.goalNormal;
+    goalAnomaly = setup.goalAnomaly;
+
+    currentMapWidth = setup.mapWidth;
+    currentMapHeight = setup.mapHeight;
+
+    stageEnemySpawns = setup.enemySpawns;
+    stageItemSpawns = setup.itemSpawns;
+    stageTutorialTriggers = setup.tutorialTriggers;
+    stageTutorialBlockers = setup.tutorialBlockers;
+}
+
+// =====================================================
+// JSON 적 생성
+// =====================================================
+
+static float AngleFromDirectionString(const std::string& dir)
+{
+    if (dir == "right")
+    {
+        return 0.0f;
+    }
+
+    if (dir == "down")
+    {
+        return 1.57079632679f;
+    }
+
+    if (dir == "left")
+    {
+        return 3.14159265359f;
+    }
+
+    if (dir == "up")
+    {
+        return -1.57079632679f;
+    }
+
+    return 0.0f;
+}
+
+static void AddEnemyFromStageSpawn(
+    std::vector<Enemy>& enemies,
+    const StageEnemySpawnDef& spawn)
+{
+    Vec2 center = GetRectCenter(spawn.rect);
+
+    if (spawn.kind == "officer")
+    {
+        AddOfficer(enemies, center);
+    }
+    else if (spawn.kind == "patrol")
+    {
+        AddSentry(enemies, center);
+    }
+    else
+    {
+        AddSentry(enemies, center);
+    }
+
+    if (enemies.empty())
+    {
+        return;
+    }
+
+    Enemy& enemy = enemies.back();
+
+    enemy.rect = spawn.rect;
+    enemy.pos = GetRectCenter(enemy.rect);
+
+    enemy.angle = AngleFromDirectionString(spawn.dir);
+
+    enemy.alerted = false;
+    enemy.hasPendingNoise = false;
+    enemy.pendingNoiseEnergy = 0.0f;
+    enemy.hearingEnergy = 0.0f;
+}
 
 // =====================================================
 // 잠긴 문
@@ -579,7 +729,12 @@ void PrepareLockedDoorSoundWalls(std::vector<LockedDoor>& doors)
 void ResetLockedDoors()
 {
     lockedDoors.clear();
-    // 테스트용 잠긴 문
+
+    if (stage == 1)
+    {
+        return;
+    }
+
     lockedDoors.push_back(
     {
         Wall({ 470, 300, 32, 96 }),
@@ -714,15 +869,29 @@ void ApplyAnomalyEffects(std::vector<Enemy>& enemies)
 // =====================================================
 void ResetStage(SDL_Rect& player, std::vector<Enemy>& enemies)
 {
-    player = {100,100,32,32};
+    StageMapSetup mapSetup =
+        (stage == 1)
+        ? MakeTutorialMovementStageMap()
+        : MakePrototypeMainStageMap();
+
+    ApplyStageMapSetupToGlobals(mapSetup, player);
+    tutorial.Reset(mapSetup);
 
     enemies.clear();
-
-    AddPatrolGuard(enemies, {516,316},
-        {{650,316},{650,450},{516,450},{516,316}});
-
-    AddSentry(enemies, {316,216});
-    AddOfficer(enemies, {666,466});
+    
+    if (stage == 1 && !stageEnemySpawns.empty())
+    {
+        for (const auto& spawn : stageEnemySpawns)
+        {
+            AddEnemyFromStageSpawn(enemies, spawn);
+        }
+    }
+    else if (stage != 1)
+    {
+        AddPatrolGuard(enemies, {516,316}, {{650,316},{650,450},{516,450},{516,316}});
+        AddSentry(enemies, {316,216});
+        AddOfficer(enemies, {666,466});
+    }
 
     showStageText = true;
     stageTextStart = SDL_GetTicks();
@@ -1859,7 +2028,16 @@ bool ShouldShowAlarmSirenIndicator(
 
 void DrawStageText(SDL_Renderer* renderer, TTF_Font* font, int stage)
 {
-    std::string text = "STAGE " + std::to_string(stage);
+    std::string text;
+
+    if (stage == 1)
+    {
+        text = "TUTORIAL";
+    }
+    else
+    {
+        text = "STAGE " + std::to_string(stage - 1);
+    }
 
     SDL_Color color = {255,255,255,255};
 
@@ -1924,7 +2102,7 @@ int main(int argc, char* args[])
         return 0;
     }
 
-    SDL_Rect player = {100,100,32,32};
+    SDL_Rect player = {100,100,64,64};
 
     std::vector<Enemy> enemies;
     std::vector<SoundParticle> soundParticles;
@@ -2062,6 +2240,8 @@ int main(int argc, char* args[])
         }
 
         auto walls = GetActiveWalls();
+        auto playerCollisionWalls = walls;
+        tutorial.AppendActivePlayerBlockers(playerCollisionWalls);
 
         // =================================================
         // PLAYING
@@ -2119,7 +2299,9 @@ int main(int argc, char* args[])
             dy = dir.y * speed * dt;
 
             bool hitWall =
-                MovePlayerWithCollisionResult(player, dx, dy, walls);
+                MovePlayerWithCollisionResult(player, dx, dy, playerCollisionWalls);
+
+            tutorial.Update(player, mode, moving);
 
             if (bodyDragPressed)
             {
@@ -2150,8 +2332,9 @@ int main(int argc, char* args[])
                 player.x + player.w * 0.5f,
                 player.y + player.h * 0.5f
             };
+            camera.zoom = 1.0f;
             camera.FollowImmediate(playerCenter.x, playerCenter.y);
-            camera.ClampToBounds(WORLD_WIDTH, WORLD_HEIGHT);
+            camera.ClampToBounds(currentMapWidth, currentMapHeight);
             if (pistol.cooldown > 0.0f)
             {
                 pistol.cooldown -= dt;
@@ -2273,6 +2456,7 @@ int main(int argc, char* args[])
             // =========================================
             // 소음 물리 업데이트 thread
             // =========================================
+            const bool tutorialStage = (stage == 1);
             std::thread soundThread(
                 UpdateSoundParticles,
                 std::cref(soundParticles),
@@ -2281,23 +2465,31 @@ int main(int argc, char* args[])
                 std::ref(hearingBuffer),
                 std::cref(walls),
                 dt);
-            
+                
             // =========================================
             // 적 FSM 업데이트 thread
             // =========================================
-            std::thread enemyThread(
-                UpdateEnemies,
-                std::ref(enemies),
-                std::cref(playerSnapshot),
-                std::cref(walls),
-                alarmActive,
-                std::ref(alarmTriggered),
-                std::ref(playerHP),
-                std::ref(injuredTimer),
-                dt);
-            
+            std::thread enemyThread;
+            if (!tutorialStage)
+            {
+                enemyThread = std::thread(
+                    UpdateEnemies,
+                    std::ref(enemies),
+                    std::cref(playerSnapshot),
+                    std::cref(walls),
+                    alarmActive,
+                    std::ref(alarmTriggered),
+                    std::ref(playerHP),
+                    std::ref(injuredTimer),
+                    dt);
+            }
+                    
             soundThread.join();
-            enemyThread.join();
+                if (enemyThread.joinable())
+                {
+                    enemyThread.join();
+                }
+
             ConsumeEnemyShotTrails(enemies, bulletTrails);
             ApplyOfficerDeathRewards(enemies, worldItems, pistol.ammo, PISTOL_MAGAZINE_SIZE);
             CleanUpParticles(soundParticles, particlesNext);
@@ -2307,50 +2499,54 @@ int main(int argc, char* args[])
                 alarmActive = true;
             }
 
-            int bestBottleEnemyIndex = -1;
-            int bestBottleEventId = 0;
-            float bestBottleEnergy = 0.0f;
-            Vec2 bestBottleNoisePos = { 0.0f, 0.0f };
-            
-            for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
+            if (!tutorialStage)
             {
-                const HearingResult& hearing = hearingBuffer[i];
-                if (!hearing.heard)
+
+                int bestBottleEnemyIndex = -1;
+                int bestBottleEventId = 0;
+                float bestBottleEnergy = 0.0f;
+                Vec2 bestBottleNoisePos = { 0.0f, 0.0f };
+                
+                for (size_t i = 0; i < enemies.size() && i < hearingBuffer.size(); ++i)
                 {
-                    continue;
-                }
-                // 병 소음은 유인용이므로 같은 병 이벤트당 가장 강하게 들은 경비 1명만 조사
-                if (hearing.kind == SoundKind::Bottle)
-                {
-                    if (hearing.eventId == handledBottleSoundEventId)
+                    const HearingResult& hearing = hearingBuffer[i];
+                    if (!hearing.heard)
                     {
                         continue;
                     }
-                    if (alarmActive || enemies[i].state == EnemyState::Dead || enemies[i].state == EnemyState::Alert)
+                    // 병 소음은 유인용이므로 같은 병 이벤트당 가장 강하게 들은 경비 1명만 조사
+                    if (hearing.kind == SoundKind::Bottle)
                     {
+                        if (hearing.eventId == handledBottleSoundEventId)
+                        {
+                            continue;
+                        }
+                        if (alarmActive || enemies[i].state == EnemyState::Dead || enemies[i].state == EnemyState::Alert)
+                        {
+                            continue;
+                        }
+                        if (bestBottleEnemyIndex < 0 || hearing.energy > bestBottleEnergy)
+                        {
+                            bestBottleEnemyIndex = static_cast<int>(i);
+                            bestBottleEventId = hearing.eventId;
+                            bestBottleEnergy = hearing.energy;
+                            bestBottleNoisePos = hearing.noisePos;
+                        }
                         continue;
                     }
-                    if (bestBottleEnemyIndex < 0 || hearing.energy > bestBottleEnergy)
-                    {
-                        bestBottleEnemyIndex = static_cast<int>(i);
-                        bestBottleEventId = hearing.eventId;
-                        bestBottleEnergy = hearing.energy;
-                        bestBottleNoisePos = hearing.noisePos;
-                    }
-                    continue;
+                    NotifyEnemyOfNoise(enemies[i], hearing.noisePos, hearing.energy, alarmActive);
                 }
-                NotifyEnemyOfNoise(enemies[i], hearing.noisePos, hearing.energy, alarmActive);
-            }
-            if (bestBottleEnemyIndex >= 0)
-            {
-                Enemy& bottleEnemy = enemies[bestBottleEnemyIndex];
-                NotifyEnemyOfNoise(bottleEnemy, bestBottleNoisePos, bestBottleEnergy, alarmActive);
-                if (bottleEnemy.hasPendingNoise)
+                if (bestBottleEnemyIndex >= 0)
                 {
-                    handledBottleSoundEventId = bestBottleEventId;
+                    Enemy& bottleEnemy = enemies[bestBottleEnemyIndex];
+                    NotifyEnemyOfNoise(bottleEnemy, bestBottleNoisePos, bestBottleEnergy, alarmActive);
+                    if (bottleEnemy.hasPendingNoise)
+                    {
+                        handledBottleSoundEventId = bestBottleEventId;
+                    }
                 }
             }
-            
+
             if (alarmTriggered)
             {
                 alarmActive = true;
@@ -2611,6 +2807,7 @@ int main(int argc, char* args[])
 
         DrawInventoryHUD(renderer, uiFont, inventory);
         DrawGunHUD(renderer, uiFont, pistol, equipment.hasSuppressor);
+        tutorial.DrawUI(renderer, uiFont);
 
         // =============================================
         // 경보 / 일시정지 UI
