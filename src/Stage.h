@@ -24,6 +24,12 @@ struct StageItemSpawnDef
     SDL_Rect rect = { 0, 0, 24, 24 };
 };
 
+struct StageInteractableDef
+{
+    std::string id;
+    SDL_Rect rect = { 0, 0, 1, 1 };
+};
+
 struct StageTutorialTriggerDef
 {
     std::string id;
@@ -62,6 +68,7 @@ struct StageMapSetup
 
     std::vector<StageEnemySpawnDef> enemySpawns;
     std::vector<StageItemSpawnDef> itemSpawns;
+    std::vector<StageInteractableDef> interactables;
     std::vector<StageTutorialTriggerDef> tutorialTriggers;
     std::vector<StageTutorialBlockerDef> tutorialBlockers;
 
