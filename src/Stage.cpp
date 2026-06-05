@@ -190,6 +190,7 @@ StageMapSetup LoadStageMapFromJson(const char* path)
     setup.anomalyWalls.clear();
     setup.enemySpawns.clear();
     setup.itemSpawns.clear();
+    setup.interactables.clear();
     setup.tutorialTriggers.clear();
     setup.tutorialBlockers.clear();
 
@@ -265,6 +266,10 @@ StageMapSetup LoadStageMapFromJson(const char* path)
                     {
                         objectClass = "enemy";
                     }
+                    else if (layerName == "Interactables")
+                    {
+                        objectClass = "interactable";
+                    }
                     else if (layerName == "TutorialTriggers")
                     {
                         objectClass = "tutorial_trigger";
@@ -332,19 +337,33 @@ StageMapSetup LoadStageMapFromJson(const char* path)
                 else if (objectClass == "item")
                 {
                     StageItemSpawnDef item;
-
                     item.id = GetPropertyString(object, "id", objectName);
-
-                    item.itemType =
-                        GetPropertyString(object, "itemType", objectName);
-
+                    item.itemType = GetPropertyString(object, "itemType", "");
+                    if (item.itemType.empty())
+                    {
+                        item.itemType = item.id;
+                    }
+                    if (item.itemType.empty())
+                    {
+                        item.itemType = objectName;
+                    }
                     if (item.itemType.empty())
                     {
                         item.itemType = "bottle";
                     }
-
                     item.rect = MakeRectFromObject(object, 24, 24);
                     setup.itemSpawns.push_back(item);
+                }
+                else if (objectClass == "interactable")
+                {
+                    StageInteractableDef interactable;
+                    interactable.id = GetPropertyString(object, "id", objectName);
+                    if (interactable.id.empty())
+                    {
+                        interactable.id = objectName;
+                    }
+                    interactable.rect = MakeRectFromObject(object, 1, 1);
+                    setup.interactables.push_back(interactable);
                 }
                 else if (objectClass == "enemy")
                 {
