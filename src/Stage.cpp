@@ -461,10 +461,10 @@ StageMapSetup LoadStageMapFromJson(const char* path)
     }
 }
 
-StageMapSetup MakeTutorialMovementStageMap()
+StageMapSetup MakeTutorialStageMap()
 {
     StageMapSetup loaded =
-        LoadStageMapFromJson("assets/maps/tutorial_movement.json");
+        LoadStageMapFromJson("assets/maps/tutorial.json");
 
     if (!loaded.baseWalls.empty())
     {

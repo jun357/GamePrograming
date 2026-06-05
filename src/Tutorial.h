@@ -29,6 +29,7 @@ enum class TutorialPhase
 
     GunApproach,
     GunFirstShotPaused,
+    SuppressorAutoPickup,
     SuppressorPickupPaused,
     GunSuppressedShotPaused,
     GunKeyPickup,
@@ -64,6 +65,7 @@ public:
     bool IsWireTrainingActive() const;
     void NotifyWireTakedown(bool wasWireTakedownSuccessful);
     bool IsPistolUnlocked() const;
+    void UnlockPistol();
     bool IsBottlePickupActive() const;
     bool IsBottleThrowTrainingActive() const;
     bool IsBottleLureActive() const;
@@ -76,6 +78,7 @@ public:
     bool IsGunApproachActive() const;
     bool IsGunFirstShotPaused() const;
     bool IsSuppressorPickupPaused() const;
+    bool IsSuppressorAutoPickupActive() const;
     bool IsGunSuppressedShotPaused() const;
     bool IsGunKeyPickupActive() const;
     bool IsGunDoorIntroActive() const;
@@ -114,6 +117,8 @@ private:
 
     SDL_Point previousPlayerCenter_ = { 0, 0 };
     bool hasPreviousPlayerCenter_ = false;
+    bool pistolUnlocked_ = false;
+    bool escapeStarted_ = false;
 
 private:
     void TryStartMovementTraining(const SDL_Rect& player);

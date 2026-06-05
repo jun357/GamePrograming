@@ -365,6 +365,29 @@ static SDL_Rect MakeItemRectCentered(Vec2 center, int size = 24)
     };
 }
 
+static SDL_Rect MakeItemRectNearCorpseTowardPlayer(
+    const SDL_Rect& player,
+    const Enemy& corpse,
+    int size = 24)
+{
+    static constexpr float DROP_OFFSET_FROM_CORPSE_CENTER = 52.0f;
+
+    Vec2 playerCenter = GetRectCenter(player);
+    Vec2 corpseCenter = GetRectCenter(corpse.rect);
+
+    Vec2 playerToCorpse = corpseCenter - playerCenter;
+
+    Vec2 dir = { 1.0f, 0.0f };
+    if (LengthSq(playerToCorpse) > 0.000001f)
+    {
+        dir = Normalize(playerToCorpse);
+    }
+
+    Vec2 dropCenter = corpseCenter - dir * DROP_OFFSET_FROM_CORPSE_CENTER;
+
+    return MakeItemRectCentered(dropCenter, size);
+}
+
 void ApplyOfficerDeathRewards(
     std::vector<Enemy>& enemies,
     std::vector<WorldItem>& items,
@@ -789,27 +812,63 @@ static int FindEnemyIndexBySpawnId(
 static constexpr int TUTORIAL_GUN_STOP_GAP = 32;
 static constexpr int TUTORIAL_GUN_LANE_TOLERANCE = 56;
 
-static bool HasGuardGunReachedPlayerFront(
-    const Enemy& guardGun,
-    const SDL_Rect& player)
+static bool IsSegmentBlockedByWallsLocal(
+    Vec2 from,
+    Vec2 to,
+    const std::vector<Wall>& walls);
+
+static bool CanTutorialGuardSeePlayer(
+    const Enemy& guard,
+    const SDL_Rect& player,
+    const std::vector<Wall>& walls)
 {
-    const int playerRight = player.x + player.w;
-    const int guardLeft = guardGun.rect.x;
+    Vec2 guardCenter = GetRectCenter(guard.rect);
+    Vec2 playerCenter = GetRectCenter(player);
 
-    const Vec2 playerCenter = GetRectCenter(player);
-    const Vec2 guardCenter = GetRectCenter(guardGun.rect);
+    Vec2 toPlayer = playerCenter - guardCenter;
+    float distSq = LengthSq(toPlayer);
 
-    const float verticalDelta =
-        std::fabs(guardCenter.y - playerCenter.y);
+    if (distSq <= 0.000001f)
+    {
+        return true;
+    }
 
-    if (verticalDelta > TUTORIAL_GUN_LANE_TOLERANCE)
+    const float viewDistSq =
+        guard.viewDist * guard.viewDist;
+
+    if (distSq > viewDistSq)
     {
         return false;
     }
 
-    const int gap = guardLeft - playerRight;
+    Vec2 toPlayerDir = Normalize(toPlayer);
+    Vec2 facing =
+    {
+        std::cos(guard.angle),
+        std::sin(guard.angle)
+    };
 
-    return gap <= TUTORIAL_GUN_STOP_GAP;
+    float dot =
+        facing.x * toPlayerDir.x +
+        facing.y * toPlayerDir.y;
+
+    const float halfFov = guard.fov * 0.5f;
+    const float cosHalfFov = std::cos(halfFov);
+
+    if (dot < cosHalfFov)
+    {
+        return false;
+    }
+
+    if (IsSegmentBlockedByWallsLocal(
+            guardCenter,
+            playerCenter,
+            walls))
+    {
+        return false;
+    }
+
+    return true;
 }
 
 static void SetEnemyCenterForTutorial(Enemy& enemy, Vec2 center)
@@ -902,7 +961,7 @@ static void StartTutorialCabinetAlert(
     std::vector<Enemy>& enemies,
     const SDL_Rect& player)
 {
-    int index = FindEnemyIndexBySpawnId(enemies, "guard_cabinet");
+    int index = FindEnemyIndexBySpawnId(enemies, "guard_codebook");
 
     if (index < 0 ||
         index >= static_cast<int>(enemies.size()) ||
@@ -910,7 +969,7 @@ static void StartTutorialCabinetAlert(
         enemies[index].bodyHidden)
     {
         // guard_cabinet이 이미 은닉된 경우를 대비한 fallback
-        index = FindEnemyIndexBySpawnId(enemies, "guard_alert_01");
+        index = FindEnemyIndexBySpawnId(enemies, "guard_cabinet");
     }
 
     if (index < 0 || index >= static_cast<int>(enemies.size()))
@@ -1069,7 +1128,10 @@ static void StartTutorialEscapeGuardMove(
 
     tutorialEscapeGuardMoveActive = true;
 
-    const size_t count = std::min(stageEnemySpawns.size(), enemies.size());
+    int startedCount = 0;
+
+    const size_t count =
+        std::min(stageEnemySpawns.size(), enemies.size());
 
     for (size_t i = 0; i < count; ++i)
     {
@@ -1092,13 +1154,87 @@ static void StartTutorialEscapeGuardMove(
         guard.heightenedAlert = true;
         guard.angle = 0.0f;
         guard.homeAngle = 0.0f;
+
+        ++startedCount;
     }
 
-    std::cout << "Escape guard movement started." << std::endl;
+    std::cout
+        << "Escape guard movement started: "
+        << startedCount
+        << " guard(s)."
+        << std::endl;
+}
+
+static constexpr float ESCAPE_GUARD_CHASE_SPEED = 96.0f;
+static constexpr float ESCAPE_GUARD_ATTACK_RANGE = 58.0f;
+static constexpr int ESCAPE_GUARD_ATTACK_DAMAGE = 8;
+static constexpr float ESCAPE_GUARD_ATTACK_COOLDOWN = 0.8f;
+
+static bool CanTutorialEnemyOccupyCenter(
+    const Enemy& enemy,
+    Vec2 center,
+    const std::vector<Wall>& walls)
+{
+    SDL_Rect rect = enemy.rect;
+
+    rect.x = static_cast<int>(
+        std::round(center.x - rect.w * 0.5f));
+    rect.y = static_cast<int>(
+        std::round(center.y - rect.h * 0.5f));
+
+    if (rect.x < 0 ||
+        rect.y < 0 ||
+        rect.x + rect.w > currentMapWidth ||
+        rect.y + rect.h > currentMapHeight)
+    {
+        return false;
+    }
+
+    for (const auto& wall : walls)
+    {
+        if (SDL_HasIntersection(&rect, &wall.rect))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+static void MoveTutorialEnemyWithCollision(
+    Enemy& enemy,
+    Vec2 delta,
+    const std::vector<Wall>& walls)
+{
+    Vec2 center = GetRectCenter(enemy.rect);
+
+    Vec2 next = center + delta;
+    if (CanTutorialEnemyOccupyCenter(enemy, next, walls))
+    {
+        SetEnemyCenterForTutorial(enemy, next);
+        return;
+    }
+
+    Vec2 nextX = { center.x + delta.x, center.y };
+    if (CanTutorialEnemyOccupyCenter(enemy, nextX, walls))
+    {
+        SetEnemyCenterForTutorial(enemy, nextX);
+        center = GetRectCenter(enemy.rect);
+    }
+
+    Vec2 nextY = { center.x, center.y + delta.y };
+    if (CanTutorialEnemyOccupyCenter(enemy, nextY, walls))
+    {
+        SetEnemyCenterForTutorial(enemy, nextY);
+    }
 }
 
 static void UpdateTutorialEscapeGuardMove(
     std::vector<Enemy>& enemies,
+    const SDL_Rect& player,
+    const std::vector<Wall>& walls,
+    int& playerHP,
+    float& injuredTimer,
     float dt)
 {
     if (!tutorialEscapeGuardMoveActive)
@@ -1106,8 +1242,15 @@ static void UpdateTutorialEscapeGuardMove(
         return;
     }
 
-    const size_t count = std::min(stageEnemySpawns.size(), enemies.size());
-    static constexpr float ESCAPE_GUARD_SPEED = 72.0f;
+    if (playerHP <= 0)
+    {
+        return;
+    }
+
+    const size_t count =
+        std::min(stageEnemySpawns.size(), enemies.size());
+
+    Vec2 playerCenter = GetRectCenter(player);
 
     for (size_t i = 0; i < count; ++i)
     {
@@ -1120,20 +1263,62 @@ static void UpdateTutorialEscapeGuardMove(
 
         Enemy& guard = enemies[i];
 
-        if (guard.state == EnemyState::Dead)
+        if (guard.state == EnemyState::Dead ||
+            guard.bodyHidden)
         {
             continue;
         }
 
+        Vec2 guardCenter = GetRectCenter(guard.rect);
+        Vec2 toPlayer = playerCenter - guardCenter;
+
+        float distSq = LengthSq(toPlayer);
+
         guard.state = EnemyState::Alert;
         guard.alerted = true;
         guard.heightenedAlert = true;
-        guard.angle = 0.0f;
-        guard.homeAngle = 0.0f;
+        guard.lastKnownPlayerPos = playerCenter;
 
-        SetEnemyCenterForTutorial(
-            guard,
-            guard.pos + Vec2{ ESCAPE_GUARD_SPEED * dt, 0.0f });
+        if (guard.attackCooldown > 0.0f)
+        {
+            guard.attackCooldown -= dt;
+        }
+
+        if (distSq <= 0.000001f)
+        {
+            continue;
+        }
+
+        Vec2 dir = Normalize(toPlayer);
+
+        guard.angle = std::atan2(dir.y, dir.x);
+        guard.homeAngle = guard.angle;
+
+        const float attackRangeSq =
+            ESCAPE_GUARD_ATTACK_RANGE *
+            ESCAPE_GUARD_ATTACK_RANGE;
+
+        if (distSq > attackRangeSq)
+        {
+            Vec2 delta =
+                dir * (ESCAPE_GUARD_CHASE_SPEED * dt);
+
+            MoveTutorialEnemyWithCollision(
+                guard,
+                delta,
+                walls);
+        }
+        else if (guard.attackCooldown <= 0.0f)
+        {
+            playerHP -= ESCAPE_GUARD_ATTACK_DAMAGE;
+            injuredTimer = 0.4f;
+            guard.attackCooldown = ESCAPE_GUARD_ATTACK_COOLDOWN;
+
+            std::cout
+                << "Escape guard hit player. HP="
+                << playerHP
+                << std::endl;
+        }
     }
 }
 
@@ -1332,6 +1517,7 @@ static void StartTutorialGunScript(
 static bool UpdateTutorialGunScript(
     std::vector<Enemy>& enemies,
     const SDL_Rect& player,
+    const std::vector<Wall>& walls,
     float dt)
 {
     if (tutorialGunScriptState != TutorialGunScriptState::MovingIn)
@@ -1357,20 +1543,20 @@ static bool UpdateTutorialGunScript(
         return false;
     }
 
-    if (HasGuardGunReachedPlayerFront(gunGuard, player))
+    if (CanTutorialGuardSeePlayer(gunGuard, player, walls))
     {
         gunGuard.angle = TUTORIAL_GUN_FACE_LEFT;
         gunGuard.homeAngle = TUTORIAL_GUN_FACE_LEFT;
+        
         suppressorGuard.angle = TUTORIAL_GUN_FACE_LEFT;
         suppressorGuard.homeAngle = TUTORIAL_GUN_FACE_LEFT;
+        
         tutorialGunScriptState = TutorialGunScriptState::WaitingFirstShot;
+        
         std::cout
-            << "Gun tutorial paused by guard_gun. "
-            << "guard_gun.x="
-            << gunGuard.rect.x
-            << " playerRight="
-            << (player.x + player.w)
+            << "Gun tutorial paused."
             << std::endl;
+            
         return true;
     }
     
@@ -1420,6 +1606,8 @@ static void DropTutorialSuppressorFromEnemy(
     SuppressorPickup& suppressor,
     const std::string& spawnId)
 {
+    (void)player;
+
     if (tutorialSuppressorDropped)
     {
         return;
@@ -1432,30 +1620,16 @@ static void DropTutorialSuppressorFromEnemy(
         return;
     }
 
-    const Vec2 playerCenter = GetRectCenter(player);
-    const Vec2 corpseCenter = GetRectCenter(enemies[index].rect);
+    Vec2 corpseCenter = GetRectCenter(enemies[index].rect);
 
-    Vec2 toCorpse = corpseCenter - playerCenter;
-
-    Vec2 dropDir = { 1.0f, 0.0f };
-    if (LengthSq(toCorpse) > 0.000001f)
-    {
-        dropDir = Normalize(toCorpse);
-    }
-
+    // 시체와 완전히 겹치지 않게 살짝 왼쪽에 드롭.
+    // guard_gun은 플레이어 오른쪽에서 왼쪽을 바라보므로,
+    // 왼쪽 offset이 플레이어가 접근하기도 쉽고 시각적으로도 덜 가려진다.
     Vec2 dropCenter =
-        playerCenter +
-        dropDir * TUTORIAL_SUPPRESSOR_DROP_DISTANCE_FROM_PLAYER;
-
-    const float corpseDistSq = DistanceSqLocal(playerCenter, corpseCenter);
-    const float dropDistSq =
-        TUTORIAL_SUPPRESSOR_DROP_DISTANCE_FROM_PLAYER *
-        TUTORIAL_SUPPRESSOR_DROP_DISTANCE_FROM_PLAYER;
-
-    if (corpseDistSq <= dropDistSq)
     {
-        dropCenter = corpseCenter;
-    }
+        corpseCenter.x - 42.0f,
+        corpseCenter.y
+    };
 
     suppressor.rect =
     {
@@ -1474,8 +1648,7 @@ static void DropTutorialSuppressorFromEnemy(
         TutorialGunScriptState::WaitingSuppressorPickup;
 
     std::cout
-        << "guard_gun dropped suppressor near player. "
-        << "drop=("
+        << "guard_gun dropped suppressor. auto pickup target=("
         << suppressor.rect.x
         << ", "
         << suppressor.rect.y
@@ -1484,6 +1657,7 @@ static void DropTutorialSuppressorFromEnemy(
 }
 
 static void DropTutorialKeyFromEnemy(
+    const SDL_Rect& player,
     const std::vector<Enemy>& enemies,
     std::vector<WorldItem>& items,
     const std::string& spawnId)
@@ -1505,7 +1679,7 @@ static void DropTutorialKeyFromEnemy(
     items.push_back(
     {
         ItemType::Key,
-        MakeItemRectCentered(dropCenter, 24),
+        MakeItemRectNearCorpseTowardPlayer(player, enemies[index], 24),
         false
     });
 
@@ -1720,9 +1894,13 @@ bool TryOpenNearestLockedDoor(
     return true;
 }
 
-static bool IsTutorialCodebookDoorRect(const SDL_Rect& doorRect)
+static bool IsTutorialCodebookDoorRect(const SDL_Rect& rect)
 {
-    return doorRect.x >= 5400 && doorRect.y < 800;
+    return rect.w <= 16 &&
+           rect.h >= 64 &&
+           rect.x >= 5400 &&
+           rect.y >= 560 &&
+           rect.y <= 720;
 }
 
 // =====================================================
@@ -1804,7 +1982,7 @@ void ResetStage(SDL_Rect& player, std::vector<Enemy>& enemies)
 {
     StageMapSetup mapSetup =
         (stage == 1)
-        ? MakeTutorialMovementStageMap()
+        ? MakeTutorialStageMap()
         : MakePrototypeMainStageMap();
 
     ApplyStageMapSetupToGlobals(mapSetup, player);
@@ -2041,6 +2219,38 @@ void DrawLockedDoors(
             "D",
             screenRect,
             { 255, 255, 255, 255 });
+    }
+}
+
+void DrawCabinets(
+    SDL_Renderer* renderer,
+    TTF_Font* font,
+    const Camera2D& camera)
+{
+    for (const auto& interactable : stageInteractables)
+    {
+        if (interactable.id != "cabinet")
+        {
+            continue;
+        }
+
+        SDL_Rect screenRect =
+            camera.WorldToScreenRect(interactable.rect);
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+        SDL_SetRenderDrawColor(renderer, 70, 55, 35, 255);
+        SDL_RenderFillRect(renderer, &screenRect);
+
+        SDL_SetRenderDrawColor(renderer, 180, 145, 90, 255);
+        SDL_RenderDrawRect(renderer, &screenRect);
+
+        DrawTextInRect(
+            renderer,
+            font,
+            "C",
+            screenRect,
+            { 255, 235, 180, 255 });
     }
 }
 
@@ -2281,8 +2491,8 @@ static bool CanCorpseOccupyCenter(
         return false;
     }
 
-    if (center.x > WORLD_WIDTH - halfW ||
-        center.y > WORLD_HEIGHT - halfH)
+    if (center.x > static_cast<float>(currentMapWidth) - halfW ||
+        center.y > static_cast<float>(currentMapHeight) - halfH)
     {
         return false;
     }
@@ -2297,6 +2507,34 @@ static void SetCorpseCenter(
 {
     corpse.pos = center;
     corpse.rect = MakeCorpseRectAtCenter(corpse, center);
+}
+
+static void SnapDraggedBodyNearPlayer(
+    Enemy& body,
+    const SDL_Rect& player,
+    const std::vector<Wall>& walls)
+{
+    Vec2 playerCenter = GetRectCenter(player);
+    Vec2 bodyCenter = GetRectCenter(body.rect);
+
+    Vec2 dir = bodyCenter - playerCenter;
+    if (LengthSq(dir) <= 0.000001f)
+    {
+        dir = { -1.0f, 0.0f };
+    }
+    else
+    {
+        dir = Normalize(dir);
+    }
+
+    Vec2 target = playerCenter + dir * BODY_DRAG_TARGET_DISTANCE;
+
+    if (CanCorpseOccupyCenter(body, target, walls))
+    {
+        SetCorpseCenter(body, target);
+    }
+
+    body.bodyVelocity = { 0.0f, 0.0f };
 }
 
 static void MoveCorpseWithCollision(
@@ -2508,6 +2746,8 @@ static bool ToggleBodyDrag(
     enemies[targetIndex].bodyDragged = true;
     enemies[targetIndex].bodyVelocity = { 0.0f, 0.0f };
     enemies[targetIndex].pos = GetRectCenter(enemies[targetIndex].rect);
+
+    SnapDraggedBodyNearPlayer(enemies[targetIndex], player, walls);
 
     draggedBodyIndex = targetIndex;
 
@@ -3270,6 +3510,73 @@ void DrawStageText(SDL_Renderer* renderer, TTF_Font* font, int stage)
     TTF_CloseFont(bigFont);
 }
 
+static constexpr float TUTORIAL_SUPPRESSOR_AUTO_MOVE_SPEED = 540.0f;
+
+static bool UpdateTutorialSuppressorAutoPickup(
+    SDL_Rect& player,
+    const std::vector<Wall>& playerCollisionWalls,
+    SuppressorPickup& suppressor,
+    Equipment& equipment,
+    PlayerGunState& pistol,
+    TutorialController& tutorial,
+    float dt)
+{
+    if (!tutorial.IsSuppressorAutoPickupActive())
+    {
+        return false;
+    }
+
+    if (equipment.hasSuppressor || suppressor.picked)
+    {
+        tutorial.NotifySuppressorPickedUp(true);
+        pistol.cooldown = 0.0f;
+        return true;
+    }
+
+    Vec2 playerCenter = GetRectCenter(player);
+    Vec2 targetCenter = GetRectCenter(suppressor.rect);
+
+    Vec2 toTarget = targetCenter - playerCenter;
+    float distSq = LengthSq(toTarget);
+
+    if (distSq > 0.000001f)
+    {
+        float dist = std::sqrt(distSq);
+        Vec2 dir = toTarget / dist;
+
+        float step =
+            TUTORIAL_SUPPRESSOR_AUTO_MOVE_SPEED * dt;
+
+        if (step > dist)
+        {
+            step = dist;
+        }
+
+        MovePlayerWithCollisionResult(
+            player,
+            dir.x * step,
+            dir.y * step,
+            playerCollisionWalls);
+    }
+
+    bool picked = TryPickupSuppressor(
+        player,
+        suppressor,
+        equipment);
+
+    if (picked)
+    {
+        tutorial.NotifySuppressorPickedUp(true);
+        pistol.cooldown = 0.0f;
+
+        std::cout
+            << "Suppressor auto-picked. Suppressed shot phase started."
+            << std::endl;
+    }
+
+    return picked;
+}
+
 // =====================================================
 // MAIN
 // =====================================================
@@ -3527,6 +3834,7 @@ int main(int argc, char* args[])
             const Uint8* key = SDL_GetKeyboardState(NULL);
 
             const bool tutorialFrozen = (stage == 1 && tutorial.IsTutorialFreezeActive());
+            const bool tutorialAutoMovingToSuppressor = (stage == 1 && tutorial.IsSuppressorAutoPickupActive());
 
             MoveMode mode = GetMoveMode(key, injuredTimer);
             if (tutorial.ShouldForceSneak() && mode != INJURED)
@@ -3541,7 +3849,7 @@ int main(int argc, char* args[])
 
             float dx = 0, dy = 0;
             
-            if (!tutorialFrozen)
+            if (!tutorialFrozen && !tutorialAutoMovingToSuppressor)
             {
                 if (key[SDL_SCANCODE_W]) dy -= 1;
                 if (key[SDL_SCANCODE_S]) dy += 1;
@@ -3568,6 +3876,18 @@ int main(int argc, char* args[])
 
             tutorial.Update(player, mode, moving);
 
+            if (tutorialAutoMovingToSuppressor)
+            {
+                UpdateTutorialSuppressorAutoPickup(
+                    player,
+                    playerCollisionWalls,
+                    suppressorPickup,
+                    equipment,
+                    pistol,
+                    tutorial,
+                    dt);
+            }
+
             if (stage == 1 && tutorial.IsGunApproachActive())
             {
                 StartTutorialGunScript(enemies);
@@ -3578,7 +3898,7 @@ int main(int argc, char* args[])
                 mode = SNEAK;
             }
 
-            if (!tutorialFrozen && bodyDragPressed)
+            if (!tutorialFrozen && !tutorialAutoMovingToSuppressor && bodyDragPressed)
             {
                 bool changed = ToggleBodyDrag(player, enemies, walls, draggedBodyIndex);
                 if (stage == 1)
@@ -3587,7 +3907,7 @@ int main(int argc, char* args[])
                         changed && IsDraggingBody(enemies, draggedBodyIndex));
                 }
             }
-            if (!tutorialFrozen)
+            if (!tutorialFrozen && !tutorialAutoMovingToSuppressor)
             {
                 UpdateDraggedBody(enemies, draggedBodyIndex, player, dir, walls, dt);
             }
@@ -3678,6 +3998,10 @@ int main(int argc, char* args[])
                             tutorial.NotifyLockedDoorOpened(true);
                             if (checkpointDoor)
                             {
+                                alarmActive = true;
+                                tutorial.UnlockPistol();
+                                pistol.cooldown = 0.0f;
+                                StartTutorialCabinetAlert(enemies, player);
                                 SaveTutorialCheckpoint(
                                     player,
                                     inventory,
@@ -3689,7 +4013,9 @@ int main(int argc, char* args[])
                                     tutorial,
                                     playerHP,
                                     alarmActive);
-                                StartTutorialCabinetAlert(enemies, player);
+                                std::cout
+                                    << "Codebook door opened: officer alert started."
+                                    << std::endl;
                             }
                         }
                         if (!openedDoor)
@@ -3769,6 +4095,7 @@ int main(int argc, char* args[])
                     if (killed)
                     {
                         DropTutorialKeyFromEnemy(
+                            player,
                             enemies,
                             worldItems,
                             "guard_suppressor");
@@ -3905,7 +4232,7 @@ int main(int argc, char* args[])
                 }
             }
 
-            if (!tutorialFrozen && UpdateTutorialGunScript(enemies, player, dt))
+            if (!tutorialFrozen && UpdateTutorialGunScript(enemies, player, walls, dt))
             {
                 tutorial.NotifyGunSightReached();
             }
@@ -3986,13 +4313,19 @@ int main(int argc, char* args[])
                 
             if (stage == 1 &&
                 tutorial.IsEscapeApproachActive() &&
-                HasPlayerEnteredTutorialTrigger(player, "escape_start"))
+                HasPlayerEnteredTutorialTrigger(player, "escape_intro"))
             {
                 tutorial.NotifyEscapeStarted();
                 StartTutorialEscapeGuardMove(enemies);
             }
             
-            UpdateTutorialEscapeGuardMove(enemies, dt);
+            UpdateTutorialEscapeGuardMove(
+                enemies,
+                player,
+                walls,
+                playerHP,
+                injuredTimer,
+                dt);
 
             ConsumeEnemyShotTrails(enemies, bulletTrails);
             ApplyOfficerDeathRewards(enemies, worldItems, pistol.ammo, PISTOL_MAGAZINE_SIZE);
@@ -4185,6 +4518,7 @@ int main(int argc, char* args[])
         }
 
         DrawLockedDoors(renderer, uiFont, lockedDoors, camera);
+        DrawCabinets(renderer, uiFont, camera);
 
         // goals
         SDL_SetRenderDrawColor(renderer, 0,255,0,255);

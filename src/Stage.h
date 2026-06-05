@@ -81,6 +81,6 @@ struct StageMapSetup
 
 StageMapSetup LoadStageMapFromJson(const char* path);
 
-StageMapSetup MakeTutorialMovementStageMap();
+StageMapSetup MakeTutorialStageMap();
 
 StageMapSetup MakePrototypeMainStageMap();

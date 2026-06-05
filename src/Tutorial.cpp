@@ -77,6 +77,11 @@ static const char* GetTutorialTextFromId(const std::string& textId)
     {
         return "Press E to pick up the suppressor.";
     }
+
+    if (textId == "tutorial.suppressor.auto_pickup")
+    {
+        return "";
+    }
     
     if (textId == "tutorial.gun.suppressed_shot")
     {
@@ -214,6 +219,11 @@ static const char* GetTutorialHintFromId(const std::string& textId)
     {
         return "";
     }
+
+    if (textId == "tutorial.suppressor.auto_pickup")
+    {
+        return "";
+    }
     
     if (textId == "tutorial.gun.suppressed_shot")
     {
@@ -303,6 +313,8 @@ void TutorialController::Reset(const StageMapSetup& setup)
 
     previousPlayerCenter_ = { 0, 0 };
     hasPreviousPlayerCenter_ = false;
+    pistolUnlocked_ = false;
+    escapeStarted_ = false;
 }
 
 void TutorialController::Update(
@@ -624,25 +636,25 @@ void TutorialController::SetBlockerActiveById(
         blockers_.size(),
         blockerActive_.size());
 
+    int changedCount = 0;
+
     for (size_t i = 0; i < count; ++i)
     {
         if (blockers_[i].id == id)
         {
             blockerActive_[i] = active;
-            std::cout
-                << "SetBlockerActiveById("
-                << id
-                << "): "
-                << (active ? "active" : "inactive")
-                << std::endl;
-            return;
+            ++changedCount;
         }
     }
 
     std::cout
         << "SetBlockerActiveById("
         << id
-        << "): not found"
+        << "): "
+        << (active ? "active" : "inactive")
+        << ", changed "
+        << changedCount
+        << " blocker(s)."
         << std::endl;
 }
 
@@ -773,6 +785,7 @@ void TutorialController::NotifyWireTakedown(bool wasWireTakedownSuccessful)
         currentTextId_ = "tutorial.body.drag";
         currentDistance_ = 0.0f;
         hasPreviousPlayerCenter_ = false;
+        SetBlockerActiveById("block_cabinet", false);
         return;
     }
 }
@@ -780,12 +793,7 @@ void TutorialController::NotifyWireTakedown(bool wasWireTakedownSuccessful)
 bool TutorialController::ShouldForceSneak() const
 {
     return phase_ == TutorialPhase::WireTraining ||
-           phase_ == TutorialPhase::CabinetWireTraining ||
-           phase_ == TutorialPhase::BodyDragTraining ||
-           phase_ == TutorialPhase::BodyHideTraining ||
-           phase_ == TutorialPhase::CabinetKeyPickup ||
-           phase_ == TutorialPhase::CodebookDoorIntro ||
-           phase_ == TutorialPhase::CodebookPickup;
+           phase_ == TutorialPhase::CabinetWireTraining;
 }
 
 bool TutorialController::IsWireTrainingActive() const
@@ -795,9 +803,18 @@ bool TutorialController::IsWireTrainingActive() const
 
 bool TutorialController::IsPistolUnlocked() const
 {
+    if (pistolUnlocked_)
+    {
+        return true;
+    }
     return phase_ == TutorialPhase::GunFirstShotPaused ||
            phase_ == TutorialPhase::GunSuppressedShotPaused ||
            phase_ == TutorialPhase::GunDone;
+}
+
+void TutorialController::UnlockPistol()
+{
+    pistolUnlocked_ = true;
 }
 
 bool TutorialController::IsBottlePickupActive() const
@@ -932,6 +949,11 @@ bool TutorialController::IsSuppressorPickupPaused() const
     return phase_ == TutorialPhase::SuppressorPickupPaused;
 }
 
+bool TutorialController::IsSuppressorAutoPickupActive() const
+{
+    return phase_ == TutorialPhase::SuppressorAutoPickup;
+}
+
 bool TutorialController::IsGunSuppressedShotPaused() const
 {
     return phase_ == TutorialPhase::GunSuppressedShotPaused;
@@ -979,8 +1001,8 @@ void TutorialController::NotifyGunGuardKilled(bool killed)
         return;
     }
 
-    phase_ = TutorialPhase::SuppressorPickupPaused;
-    currentTextId_ = "tutorial.suppressor.pickup";
+    phase_ = TutorialPhase::SuppressorAutoPickup;
+    currentTextId_ = "tutorial.suppressor.auto_pickup";
     currentDistance_ = 0.0f;
     hasPreviousPlayerCenter_ = false;
 }
@@ -992,7 +1014,8 @@ void TutorialController::NotifySuppressorPickedUp(bool picked)
         return;
     }
 
-    if (phase_ != TutorialPhase::SuppressorPickupPaused)
+    if (phase_ != TutorialPhase::SuppressorPickupPaused &&
+        phase_ != TutorialPhase::SuppressorAutoPickup)
     {
         return;
     }
@@ -1128,6 +1151,8 @@ void TutorialController::NotifyBodyHidden(bool hidden)
     currentTextId_ = "tutorial.cabinet.key";
     currentDistance_ = 0.0f;
     hasPreviousPlayerCenter_ = false;
+
+    SetBlockerActiveById("block_key", false);
 }
 
 void TutorialController::NotifyCodebookPickedUp(bool picked)
@@ -1146,6 +1171,7 @@ void TutorialController::NotifyCodebookPickedUp(bool picked)
     currentTextId_ = "tutorial.escape";
     currentDistance_ = 0.0f;
     hasPreviousPlayerCenter_ = false;
+    escapeStarted_ = false;
 
     SetBlockerActiveById("block_codebook", false);
 }
@@ -1157,9 +1183,18 @@ void TutorialController::NotifyEscapeStarted()
         return;
     }
 
+    if (escapeStarted_)
+    {
+        return;
+    }
+
+    escapeStarted_ = true;
+
     currentTextId_ = "tutorial.escape";
     currentDistance_ = 0.0f;
     hasPreviousPlayerCenter_ = false;
+
+    SetBlockerActiveById("block_codebook", true);
 }
 
 void TutorialController::NotifyGoalReached()
