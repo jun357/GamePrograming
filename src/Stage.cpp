@@ -188,6 +188,8 @@ StageMapSetup LoadStageMapFromJson(const char* path)
 
     setup.baseWalls.clear();
     setup.anomalyWalls.clear();
+    setup.etcCollisionWalls.clear();
+    setup.etcs.clear();
     setup.enemySpawns.clear();
     setup.itemSpawns.clear();
     setup.interactables.clear();
@@ -243,6 +245,8 @@ StageMapSetup LoadStageMapFromJson(const char* path)
 
                 std::string objectClass = GetObjectClassOrType(object);
                 std::string objectName = object.value("name", std::string(""));
+                std::string objectType = object.value("type", std::string(""));
+                std::string objectId = GetPropertyString(object, "id", "");
 
                 if (objectClass.empty())
                 {
@@ -270,6 +274,10 @@ StageMapSetup LoadStageMapFromJson(const char* path)
                     {
                         objectClass = "interactable";
                     }
+                    else if (layerName == "Etcs")
+                    {
+                        objectClass = "etc";
+                    }
                     else if (layerName == "TutorialTriggers")
                     {
                         objectClass = "tutorial_trigger";
@@ -278,6 +286,38 @@ StageMapSetup LoadStageMapFromJson(const char* path)
                     {
                         objectClass = "tutorial_blocker";
                     }
+                }
+
+                if (objectClass == "etc" || objectClass == "etcs")
+                {
+                    SDL_Rect rect = MakeRectFromObject(object);
+                    if (rect.w <= 0 || rect.h <= 0)
+                    {
+                        continue;
+                    }
+                    setup.etcCollisionWalls.push_back(Wall(rect));
+                    StageEtcDef etc;
+                    etc.rect = rect;
+                    etc.name = objectName;
+                    etc.type = objectType.empty() ? objectClass : objectType;
+                    etc.dir = GetPropertyString(object, "dir", "");
+                    setup.etcs.push_back(etc);
+                    continue;
+                }
+
+                if (objectId == "unopenable_door")
+                {
+                    SDL_Rect rect = MakeRectFromObject(object);
+                    if (rect.w <= 0 || rect.h <= 0)
+                    {
+                        continue;
+                    }
+                    setup.baseWalls.push_back(Wall(rect));
+                    StageInteractableDef interactable;
+                    interactable.id = "unopenable_door";
+                    interactable.rect = rect;
+                    setup.interactables.push_back(interactable);
+                    continue;
                 }
 
                 if (objectClass == "wall")
@@ -379,6 +419,7 @@ StageMapSetup LoadStageMapFromJson(const char* path)
                     enemy.dir = GetPropertyString(object, "dir", "down");
                     enemy.scripted = GetPropertyBool(object, "scripted", false);
                     enemy.tutorialPassive = GetPropertyBool(object, "tutorialPassive", false);
+                    enemy.dropKey = GetPropertyBool(object, "dropKey", false);
                     enemy.rect = MakeRectFromObject(object, 64, 64);
 
                     setup.enemySpawns.push_back(enemy);
@@ -547,28 +588,5 @@ StageMapSetup MakeTutorialStageMap()
 
 StageMapSetup MakePrototypeMainStageMap()
 {
-    StageMapSetup setup;
-
-    setup.playerStart = { 100, 100, 32, 32 };
-
-    setup.baseWalls =
-    {
-        Wall({ 200, 150, 20, 200 }),
-        Wall({ 400, 100, 20, 300 }),
-        Wall({ 100, 400, 300, 20 })
-    };
-
-    setup.anomalyWalls =
-    {
-        Wall({ 500, 350, 200, 20 }),
-        Wall({ 250, 250, 20, 200 })
-    };
-
-    setup.goalNormal = { 700, 500, 40, 40 };
-    setup.goalAnomaly = { 700, 100, 40, 40 };
-
-    PrepareSoundWalls(setup.baseWalls);
-    PrepareSoundWalls(setup.anomalyWalls);
-
-    return setup;
+    return LoadStageMapFromJson("assets/maps/stage.json");
 }

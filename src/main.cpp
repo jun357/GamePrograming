@@ -1,5 +1,6 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_image.h>
 
 #include <iostream>
 #include <vector>
@@ -55,6 +56,33 @@ bool anomalyWall = false;
 bool anomalyEnemy = false;
 bool anomalyFOV = false;
 bool anomalySound = false;
+
+bool mainStageAnomalyTriggered = false;
+bool mainStageReturnHintVisible = false;
+Uint32 mainStageReturnHintStart = 0;
+
+static constexpr Uint32 MAIN_STAGE_RETURN_HINT_DURATION_MS = 5000;
+
+std::string hudMessageText;
+Uint32 hudMessageStart = 0;
+Uint32 hudMessageDuration = 0;
+
+// =====================================================
+// 플레이어 시각 상태
+// =====================================================
+
+static float playerVisualFacingAngle = 1.57079632679f;
+static float playerAnimTimer = 0.0f;
+static int playerAnimFrame = 0;
+
+static SDL_Scancode lastPlayerMoveFacingKey = SDL_SCANCODE_UNKNOWN;
+
+static float playerFireVisualTimer = 0.0f;
+static float playerFireVisualAngle = 0.0f;
+
+static constexpr float PLAYER_FIRE_VISUAL_DURATION = 0.16f;
+static constexpr int PLAYER_SPRITE_RENDER_SIZE = 56;
+static constexpr int PLAYER_FIRE_RENDER_LONG_SIDE = 68;
 
 // =====================================================
 // 골
@@ -118,6 +146,7 @@ std::vector<StageItemSpawnDef> stageItemSpawns;
 std::vector<StageTutorialTriggerDef> stageTutorialTriggers;
 std::vector<StageTutorialBlockerDef> stageTutorialBlockers;
 std::vector<StageInteractableDef> stageInteractables;
+std::vector<StageEtcDef> stageEtcs;
 
 static const char* GetItemLetter(ItemType type)
 {
@@ -232,18 +261,6 @@ void ResetWorldItems(std::vector<WorldItem>& items)
 
         return;
     }
-
-    if (stage == 1)
-    {
-        return;
-    }
-
-    WorldItem fallback;
-    fallback.type = ItemType::Bottle;
-    fallback.rect = { 150, 110, 24, 24 };
-    fallback.picked = false;
-
-    items.push_back(fallback);
 }
 
 bool TryPickupNearestItem(
@@ -308,38 +325,63 @@ void ResetSuppressorPickup(
     if (stage == 1)
     {
         suppressor.rect = { -1000, -1000, 1, 1 };
+
         suppressor.picked = true;
         return;
     }
 
-    suppressor.rect =
+    for (const auto& interactable : stageInteractables)
     {
-        260,
-        118,
-        SUPPRESSOR_PICKUP_WIDTH,
-        SUPPRESSOR_PICKUP_HEIGHT
-    };
+        if (interactable.id != "suppressor")
+        {
+            continue;
+        }
+
+        suppressor.rect = interactable.rect;
+        suppressor.picked = equipment.hasSuppressor;
+        return;
+    }
+
+    suppressor.rect = { -1000, -1000, 1, 1 };
+
     suppressor.picked = equipment.hasSuppressor;
 }
 
-bool TryPickupSuppressor(
+static bool TryPickupSuppressor(
     const SDL_Rect& player,
     SuppressorPickup& suppressor,
     Equipment& equipment)
 {
-    static constexpr float PICKUP_RANGE = SUPPRESSOR_PICKUP_RANGE;
-    const float pickupRangeSq = PICKUP_RANGE * PICKUP_RANGE;
-
-    if (equipment.hasSuppressor || suppressor.picked)
+    if (equipment.hasSuppressor)
     {
         return false;
     }
 
+    if (suppressor.picked)
+    {
+        return false;
+    }
+
+    if (suppressor.rect.w <= 0 || suppressor.rect.h <= 0)
+    {
+        return false;
+    }
+
+    bool touching = SDL_HasIntersection(
+        &player,
+        &suppressor.rect) == SDL_TRUE;
+
     Vec2 playerCenter = GetRectCenter(player);
     Vec2 suppressorCenter = GetRectCenter(suppressor.rect);
 
-    float distSq = DistanceSqLocal(playerCenter, suppressorCenter);
-    if (distSq > pickupRangeSq)
+    float pickupRangeSq =
+        SUPPRESSOR_PICKUP_RANGE *
+        SUPPRESSOR_PICKUP_RANGE;
+
+    bool inRange =
+        DistanceSqLocal(playerCenter, suppressorCenter) <= pickupRangeSq;
+
+    if (!touching && !inRange)
     {
         return false;
     }
@@ -347,9 +389,7 @@ bool TryPickupSuppressor(
     equipment.hasSuppressor = true;
     suppressor.picked = true;
 
-    std::cout
-        << "Picked up suppressor."
-        << std::endl;
+    std::cout << "Suppressor equipped." << std::endl;
 
     return true;
 }
@@ -363,6 +403,66 @@ static SDL_Rect MakeItemRectCentered(Vec2 center, int size = 24)
         size,
         size
     };
+}
+
+static SDL_Rect MakeCenteredWorldRectBySize(
+    const SDL_Rect& base,
+    int width,
+    int height)
+{
+    Vec2 center =
+        GetRectCenter(base);
+
+    return
+    {
+        static_cast<int>(std::round(center.x - width * 0.5f)),
+        static_cast<int>(std::round(center.y - height * 0.5f)),
+        width,
+        height
+    };
+}
+
+static SDL_Rect MakeCenteredWorldRectFromSource(
+    const SDL_Rect& base,
+    const SDL_Rect& source,
+    int longSide)
+{
+    if (source.w <= 0 || source.h <= 0)
+    {
+        return MakeCenteredWorldRectBySize(
+            base,
+            longSide,
+            longSide);
+    }
+
+    int width = longSide;
+    int height = longSide;
+
+    if (source.w >= source.h)
+    {
+        width = longSide;
+        height =
+            static_cast<int>(
+                std::round(
+                    longSide *
+                    static_cast<float>(source.h) /
+                    static_cast<float>(source.w)));
+    }
+    else
+    {
+        height = longSide;
+        width =
+            static_cast<int>(
+                std::round(
+                    longSide *
+                    static_cast<float>(source.w) /
+                    static_cast<float>(source.h)));
+    }
+
+    return MakeCenteredWorldRectBySize(
+        base,
+        width,
+        height);
 }
 
 static SDL_Rect MakeItemRectNearCorpseTowardPlayer(
@@ -389,11 +489,15 @@ static SDL_Rect MakeItemRectNearCorpseTowardPlayer(
 }
 
 void ApplyOfficerDeathRewards(
+    const SDL_Rect& player,
     std::vector<Enemy>& enemies,
     std::vector<WorldItem>& items,
     int& pistolAmmo,
     int magazineSize)
 {
+    (void)pistolAmmo;
+    (void)magazineSize;
+
     for (auto& enemy : enemies)
     {
         if (enemy.kind != EnemyKind::Officer ||
@@ -403,20 +507,25 @@ void ApplyOfficerDeathRewards(
             continue;
         }
 
-        Vec2 dropPos = GetRectCenter(enemy.rect);
+        if (stage != 1 && !enemy.dropKeyOnDeath)
+        {
+            enemy.officerRewardGiven = true;
+            continue;
+        }
 
         items.push_back(
-        {
-            ItemType::Key,
-            MakeItemRectCentered(dropPos),
-            false
-        });
-
-        pistolAmmo = magazineSize;
+            {
+                ItemType::Key,
+                MakeItemRectNearCorpseTowardPlayer(
+                    player,
+                    enemy,
+                    24),
+                    false
+            });
 
         enemy.officerRewardGiven = true;
 
-        std::cout << "Officer dropped key and refilled pistol ammo\n";
+        std::cout << "Officer dropped key\n";
     }
 }
 
@@ -671,6 +780,8 @@ void DrawBottleProjectiles(
 // =====================================================
 std::vector<Wall> baseWalls;
 std::vector<Wall> anomalyWalls;
+std::vector<Wall> etcCollisionWalls;
+std::vector<SDL_Rect> reachableFloorTiles;
 TutorialController tutorial;
 
 static void DrawTutorialBottleThrowZone(
@@ -948,8 +1059,8 @@ static bool tutorialCabinetAlertActive = false;
 static int tutorialCabinetAlertIndex = -1;
 
 static constexpr float TUTORIAL_CABINET_ALERT_SPEED = 110.0f;
-static constexpr float TUTORIAL_CABINET_ATTACK_RANGE = 48.0f;
-static constexpr int TUTORIAL_CABINET_ATTACK_DAMAGE = 25;
+static constexpr float TUTORIAL_CABINET_ATTACK_RANGE = 240.0f;
+static constexpr int TUTORIAL_CABINET_ATTACK_DAMAGE = 20;
 
 static void ResetTutorialCabinetAlertScript()
 {
@@ -1695,6 +1806,7 @@ static void ApplyStageMapSetupToGlobals(const StageMapSetup& setup, SDL_Rect& pl
 
     baseWalls = setup.baseWalls;
     anomalyWalls = setup.anomalyWalls;
+    etcCollisionWalls = setup.etcCollisionWalls;
 
     goalNormal = setup.goalNormal;
     goalAnomaly = setup.goalAnomaly;
@@ -1707,6 +1819,7 @@ static void ApplyStageMapSetupToGlobals(const StageMapSetup& setup, SDL_Rect& pl
     stageTutorialTriggers = setup.tutorialTriggers;
     stageTutorialBlockers = setup.tutorialBlockers;
     stageInteractables = setup.interactables;
+    stageEtcs = setup.etcs;
 }
 
 // =====================================================
@@ -1750,7 +1863,7 @@ static void AddEnemyFromStageSpawn(
     }
     else if (spawn.kind == "patrol")
     {
-        AddSentry(enemies, center);
+        AddPatrolGuard(enemies, center, {});
     }
     else
     {
@@ -1766,13 +1879,14 @@ static void AddEnemyFromStageSpawn(
 
     enemy.rect = spawn.rect;
     enemy.pos = GetRectCenter(enemy.rect);
-
     enemy.angle = AngleFromDirectionString(spawn.dir);
-
+    enemy.homeAngle = enemy.angle;
     enemy.alerted = false;
     enemy.hasPendingNoise = false;
     enemy.pendingNoiseEnergy = 0.0f;
     enemy.hearingEnergy = 0.0f;
+    enemy.dropKeyOnDeath =
+    enemy.kind == EnemyKind::Officer && spawn.dropKey;
 }
 
 // =====================================================
@@ -1811,34 +1925,20 @@ void ResetLockedDoors()
 {
     lockedDoors.clear();
 
-    if (stage == 1)
+    for (const auto& interactable : stageInteractables)
     {
-        for (const auto& interactable : stageInteractables)
+        if (interactable.id != "locked_door")
         {
-            if (interactable.id != "locked_door")
-            {
-                continue;
-            }
-
-            lockedDoors.push_back(
-            {
-                Wall(interactable.rect),
-                false,
-                true
-            });
+            continue;
         }
 
-        PrepareLockedDoorSoundWalls(lockedDoors);
-        return;
+        lockedDoors.push_back(
+        {
+            Wall(interactable.rect),
+            false,
+            true
+        });
     }
-
-    lockedDoors.push_back(
-    {
-        Wall({ 470, 300, 32, 96 }),
-        false,
-        true
-    });
-
     PrepareLockedDoorSoundWalls(lockedDoors);
 }
 
@@ -1926,6 +2026,246 @@ std::vector<Wall> GetActiveWalls()
     return result;
 }
 
+std::vector<Wall> GetActorCollisionWalls(
+    const std::vector<Wall>& activeWalls)
+{
+    std::vector<Wall> result;
+    result.reserve(activeWalls.size() + etcCollisionWalls.size());
+
+    result.insert(
+        result.end(),
+        activeWalls.begin(),
+        activeWalls.end());
+
+    result.insert(
+        result.end(),
+        etcCollisionWalls.begin(),
+        etcCollisionWalls.end());
+
+    return result;
+}
+
+static constexpr int FLOOR_TILE_SIZE = 20;
+
+static bool PointInsideRect(
+    Vec2 point,
+    const SDL_Rect& rect)
+{
+    return
+        point.x >= rect.x &&
+        point.x < rect.x + rect.w &&
+        point.y >= rect.y &&
+        point.y < rect.y + rect.h;
+}
+
+static bool PointInsideAnyWall(
+    Vec2 point,
+    const std::vector<Wall>& walls)
+{
+    for (const auto& wall : walls)
+    {
+        if (PointInsideRect(point, wall.rect))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static void RebuildReachableFloorTiles(
+    const SDL_Rect& playerStart)
+{
+    reachableFloorTiles.clear();
+
+    if (currentMapWidth <= 0 || currentMapHeight <= 0)
+    {
+        return;
+    }
+
+    const int cols =
+        (currentMapWidth + FLOOR_TILE_SIZE - 1) / FLOOR_TILE_SIZE;
+
+    const int rows =
+        (currentMapHeight + FLOOR_TILE_SIZE - 1) / FLOOR_TILE_SIZE;
+
+    if (cols <= 0 || rows <= 0)
+    {
+        return;
+    }
+
+    std::vector<unsigned char> blocked(cols * rows, 0);
+    std::vector<unsigned char> visited(cols * rows, 0);
+    std::vector<int> queue;
+    queue.reserve(cols * rows);
+
+    auto IndexOf =
+        [cols](int x, int y)
+        {
+            return y * cols + x;
+        };
+
+    auto TryAddCell =
+        [&](int sx, int sy)
+        {
+            if (sx < 0 || sy < 0 || sx >= cols || sy >= rows)
+            {
+                return false;
+            }
+
+            int index = IndexOf(sx, sy);
+
+            if (blocked[index] || visited[index])
+            {
+                return false;
+            }
+
+            visited[index] = 1;
+            queue.push_back(index);
+
+            return true;
+        };
+    
+    auto AddSeed =
+    [&](const SDL_Rect& rect)
+    {
+        Vec2 center = GetRectCenter(rect);
+        int sx = static_cast<int>(center.x) / FLOOR_TILE_SIZE;
+        int sy = static_cast<int>(center.y) / FLOOR_TILE_SIZE;
+        if (TryAddCell(sx, sy))
+        {
+            return;
+        }
+
+        static constexpr int SEED_SEARCH_RADIUS = 4;
+
+        for (int radius = 1; radius <= SEED_SEARCH_RADIUS; ++radius)
+        {
+            for (int dy = -radius; dy <= radius; ++dy)
+            {
+                for (int dx = -radius; dx <= radius; ++dx)
+                {
+                    if (std::abs(dx) != radius && std::abs(dy) != radius)
+                    {
+                        continue;
+                    }
+
+                    if (TryAddCell(sx + dx, sy + dy))
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+    };
+
+    for (int y = 0; y < rows; ++y)
+    {
+        for (int x = 0; x < cols; ++x)
+        {
+            SDL_Rect tile =
+            {
+                x * FLOOR_TILE_SIZE,
+                y * FLOOR_TILE_SIZE,
+                FLOOR_TILE_SIZE,
+                FLOOR_TILE_SIZE
+            };
+
+            Vec2 tileCenter =
+            {
+                tile.x + tile.w * 0.5f,
+                tile.y + tile.h * 0.5f
+            };
+
+            if (PointInsideAnyWall(tileCenter, baseWalls))
+            {
+                blocked[IndexOf(x, y)] = 1;
+            }
+        }
+    }
+
+    AddSeed(playerStart);
+    AddSeed(goalNormal);
+
+    for (const auto& spawn : stageItemSpawns)
+    {
+        AddSeed(spawn.rect);
+    }
+
+    for (const auto& spawn : stageEnemySpawns)
+    {
+        AddSeed(spawn.rect);
+    }
+
+    size_t head = 0;
+
+    while (head < queue.size())
+    {
+        int index = queue[head++];
+
+        int x = index % cols;
+        int y = index / cols;
+
+        const int dx[4] =
+        {
+            1,
+            -1,
+            0,
+            0
+        };
+
+        const int dy[4] =
+        {
+            0,
+            0,
+            1,
+            -1
+        };
+
+        for (int i = 0; i < 4; ++i)
+        {
+            int nx = x + dx[i];
+            int ny = y + dy[i];
+
+            if (nx < 0 || ny < 0 || nx >= cols || ny >= rows)
+            {
+                continue;
+            }
+
+            int nextIndex = IndexOf(nx, ny);
+
+            if (blocked[nextIndex] || visited[nextIndex])
+            {
+                continue;
+            }
+
+            visited[nextIndex] = 1;
+            queue.push_back(nextIndex);
+        }
+    }
+
+    for (int y = 0; y < rows; ++y)
+    {
+        for (int x = 0; x < cols; ++x)
+        {
+            if (!visited[IndexOf(x, y)])
+            {
+                continue;
+            }
+
+            SDL_Rect tile =
+            {
+                x * FLOOR_TILE_SIZE,
+                y * FLOOR_TILE_SIZE,
+                FLOOR_TILE_SIZE,
+                FLOOR_TILE_SIZE
+            };
+
+            reachableFloorTiles.push_back(tile);
+        }
+    }
+}
+
 // =====================================================
 // 이변 효과 적용
 // =====================================================
@@ -1975,6 +2315,77 @@ void ApplyAnomalyEffects(std::vector<Enemy>& enemies)
     }
 }
 
+static void TriggerMainStageAnomaly(std::vector<Enemy>& enemies)
+{
+    if (stage == 1)
+    {
+        return;
+    }
+
+    if (mainStageAnomalyTriggered)
+    {
+        return;
+    }
+
+    mainStageAnomalyTriggered = true;
+
+    anomalyActive = false;
+    anomalyWall = false;
+    anomalyEnemy = false;
+    anomalyFOV = false;
+    anomalySound = false;
+
+    std::random_device rd;
+    std::mt19937 rng(rd());
+
+    std::vector<int> pool =
+    {
+        2,
+        3
+    };
+
+    std::shuffle(pool.begin(), pool.end(), rng);
+
+    std::uniform_int_distribution<int> countDist(
+        1,
+        static_cast<int>(pool.size()));
+
+    int count = countDist(rng);
+
+    for (int i = 0; i < count; ++i)
+    {
+        switch (pool[i])
+        {
+        case 2:
+            anomalyFOV = true;
+            break;
+
+        case 3:
+            anomalySound = true;
+            break;
+        }
+    }
+
+    anomalyActive =
+        anomalyFOV ||
+        anomalySound;
+
+    ApplyAnomalyEffects(enemies);
+
+    mainStageReturnHintVisible = true;
+    mainStageReturnHintStart = SDL_GetTicks();
+
+    std::cout
+        << "Codebook acquired. Return to the starting point!"
+        << std::endl;
+
+    std::cout
+        << "[Main Stage] anomaly triggered after codebook pickup. "
+        << "fov=" << anomalyFOV
+        << " sound=" << anomalySound
+        << std::endl;
+}
+
 // =====================================================
 // 스테이지 초기화
 // =====================================================
@@ -1992,88 +2403,41 @@ void ResetStage(SDL_Rect& player, std::vector<Enemy>& enemies)
     ResetTutorialGunScript();
     ResetTutorialCabinetAlertScript();
     ResetTutorialEscapeGuardScript();
+    RebuildReachableFloorTiles(player);
     
     enemies.clear();
     
-    if (stage == 1 && !stageEnemySpawns.empty())
+    if (!stageEnemySpawns.empty())
     {
         for (const auto& spawn : stageEnemySpawns)
         {
             AddEnemyFromStageSpawn(enemies, spawn);
         }
     }
-    else if (stage != 1)
-    {
-        AddPatrolGuard(enemies, {516,316}, {{650,316},{650,450},{516,450},{516,316}});
-        AddSentry(enemies, {316,216});
-        AddOfficer(enemies, {666,466});
-    }
 
     showStageText = true;
     stageTextStart = SDL_GetTicks();
     displayStage = stage;
 
-    // reset anomaly
     anomalyActive = false;
     anomalyWall = false;
     anomalyEnemy = false;
     anomalyFOV = false;
     anomalySound = false;
-
-    // stage 1 = safe
-    if (stage == 1) return;
-
-    // random anomaly count
-    // 0~2개 이변을 랜덤으로 선택한다.
-    // stage 1은 위에서 return하므로, 여기까지 오면 stage 2 이상이다.
-    std::random_device rd;
-    std::mt19937 rng(rd());
     
-    // 0~2개 이변 허용.
-    // stage 2 이상에서 반드시 이변이 나오게 하고 싶으면 (1, 2)로 바꾼다.
-    std::uniform_int_distribution<int> countDist(0, 2);
-    int count = countDist(rng);
+    mainStageAnomalyTriggered = false;
+    mainStageReturnHintVisible = false;
+    mainStageReturnHintStart = 0;
     
-    // 0: wall, 1: enemy, 2: fov, 3: sound
-    std::vector<int> pool = { 0, 1, 2, 3 };
-    
-    std::shuffle(pool.begin(), pool.end(), rng);
-    
-    for (int i = 0; i < count && i < static_cast<int>(pool.size()); ++i)
+    if (stage == 1)
     {
-        switch (pool[i])
-        {
-            case 0:
-                anomalyWall = true;
-                break;
-            case 1:
-                anomalyEnemy = true;
-                break;
-            case 2:
-                anomalyFOV = true;
-                break;
-            case 3:
-                anomalySound = true;
-                break;
-        }
+        return;
     }
-    anomalyActive =
-        anomalyWall ||
-        anomalyEnemy ||
-        anomalyFOV ||
-        anomalySound;
-    
-    // 선택된 이변을 실제 게임 상태에 반영
-    ApplyAnomalyEffects(enemies);
     
     std::cout
-        << "[Stage " << stage << "] "
-        << "anomalyActive=" << anomalyActive
-        << " wall=" << anomalyWall
-        << " enemy=" << anomalyEnemy
-        << " fov=" << anomalyFOV
-        << " sound=" << anomalySound
-        << std::endl;
+      << "[Stage " << stage << "] "
+      << "main stage loaded. Codebook will trigger anomaly."
+      << std::endl;
 }
 
 // =====================================================
@@ -2138,6 +2502,59 @@ void DrawTextInRect(
     SDL_DestroyTexture(texture);
 }
 
+static void ShowHudMessage(
+    const std::string& text,
+    Uint32 durationMs = 2500)
+{
+    hudMessageText = text;
+    hudMessageStart = SDL_GetTicks();
+    hudMessageDuration = durationMs;
+}
+
+static void DrawHudMessage(
+    SDL_Renderer* renderer,
+    TTF_Font* font)
+{
+    if (hudMessageText.empty())
+    {
+        return;
+    }
+
+    Uint32 now = SDL_GetTicks();
+
+    if (now - hudMessageStart > hudMessageDuration)
+    {
+        hudMessageText.clear();
+        hudMessageDuration = 0;
+        return;
+    }
+
+    SDL_Rect box =
+    {
+        SCREEN_WIDTH / 2 - 280,
+        82,
+        560,
+        42
+    };
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 190);
+    SDL_RenderFillRect(renderer, &box);
+
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 220);
+    SDL_RenderDrawRect(renderer, &box);
+
+    DrawTextInRect(
+        renderer,
+        font,
+        hudMessageText.c_str(),
+        box,
+        { 255, 255, 255, 255 });
+}
+
+static bool IsScreenRectVisible(const SDL_Rect& rect);
+
 void DrawWorldItems(
     SDL_Renderer* renderer,
     TTF_Font* font,
@@ -2152,6 +2569,11 @@ void DrawWorldItems(
         }
 
         SDL_Rect screenRect = camera.WorldToScreenRect(item.rect);
+
+        if (!IsScreenRectVisible(screenRect))
+        {
+            continue;
+        }
 
         SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
         SDL_RenderFillRect(renderer, &screenRect);
@@ -2181,6 +2603,11 @@ void DrawSuppressorPickup(
 
     SDL_Rect screenRect = camera.WorldToScreenRect(suppressor.rect);
 
+    if (!IsScreenRectVisible(screenRect))
+    {
+        return;
+    }
+
     SDL_SetRenderDrawColor(renderer, 120, 120, 120, 255);
     SDL_RenderFillRect(renderer, &screenRect);
 
@@ -2198,6 +2625,12 @@ void DrawLockedDoors(
     {
         SDL_Rect screenRect = camera.WorldToScreenRect(door.wall.rect);
 
+        if (!IsScreenRectVisible(screenRect))
+        {
+            continue;
+        }
+
+
         if (door.opened)
         {
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
@@ -2212,13 +2645,35 @@ void DrawLockedDoors(
 
         SDL_SetRenderDrawColor(renderer, 255, 220, 120, 255);
         SDL_RenderDrawRect(renderer, &screenRect);
+    }
+}
 
-        DrawTextInRect(
-            renderer,
-            font,
-            "D",
-            screenRect,
-            { 255, 255, 255, 255 });
+void DrawUnopenableDoors(
+    SDL_Renderer* renderer,
+    const Camera2D& camera)
+{
+    for (const auto& interactable : stageInteractables)
+    {
+        if (interactable.id != "unopenable_door")
+        {
+            continue;
+        }
+
+        SDL_Rect screenRect =
+            camera.WorldToScreenRect(interactable.rect);
+
+        if (!IsScreenRectVisible(screenRect))
+        {
+            continue;
+        }
+
+        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+        SDL_SetRenderDrawColor(renderer, 95, 55, 24, 255);
+        SDL_RenderFillRect(renderer, &screenRect);
+
+        SDL_SetRenderDrawColor(renderer, 150, 95, 45, 255);
+        SDL_RenderDrawRect(renderer, &screenRect);
     }
 }
 
@@ -2234,8 +2689,12 @@ void DrawCabinets(
             continue;
         }
 
-        SDL_Rect screenRect =
-            camera.WorldToScreenRect(interactable.rect);
+        SDL_Rect screenRect = camera.WorldToScreenRect(interactable.rect);
+
+        if (!IsScreenRectVisible(screenRect))
+        {
+            continue;
+        }
 
         SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
@@ -2254,15 +2713,522 @@ void DrawCabinets(
     }
 }
 
+struct InventoryIconTextures
+{
+    SDL_Texture* bottle = nullptr;
+    SDL_Texture* key = nullptr;
+    SDL_Texture* codebook = nullptr;
+};
+
+static SDL_Texture* LoadTexture(
+    SDL_Renderer* renderer,
+    const char* path)
+{
+    SDL_Surface* surface = IMG_Load(path);
+
+    if (!surface)
+    {
+        std::cout
+            << "IMG_Load failed: "
+            << path
+            << " / "
+            << IMG_GetError()
+            << std::endl;
+
+        return nullptr;
+    }
+
+    SDL_Texture* texture =
+        SDL_CreateTextureFromSurface(renderer, surface);
+
+    SDL_FreeSurface(surface);
+
+    if (!texture)
+    {
+        std::cout
+            << "SDL_CreateTextureFromSurface failed: "
+            << path
+            << " / "
+            << SDL_GetError()
+            << std::endl;
+
+        return nullptr;
+    }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+
+    return texture;
+}
+
+static SDL_Rect FindOpaqueBounds(
+    SDL_Surface* surface)
+{
+    SDL_Rect full =
+    {
+        0,
+        0,
+        surface->w,
+        surface->h
+    };
+
+    int minX = surface->w;
+    int minY = surface->h;
+    int maxX = -1;
+    int maxY = -1;
+
+    for (int y = 0; y < surface->h; ++y)
+    {
+        Uint8* row =
+            static_cast<Uint8*>(surface->pixels) +
+            y * surface->pitch;
+
+        for (int x = 0; x < surface->w; ++x)
+        {
+            Uint32 pixel =
+                reinterpret_cast<Uint32*>(row)[x];
+
+            Uint8 r = 0;
+            Uint8 g = 0;
+            Uint8 b = 0;
+            Uint8 a = 0;
+
+            SDL_GetRGBA(
+                pixel,
+                surface->format,
+                &r,
+                &g,
+                &b,
+                &a);
+
+            if (a <= 8)
+            {
+                continue;
+            }
+
+            minX = std::min(minX, x);
+            minY = std::min(minY, y);
+            maxX = std::max(maxX, x);
+            maxY = std::max(maxY, y);
+        }
+    }
+
+    if (maxX < minX || maxY < minY)
+    {
+        return full;
+    }
+
+    return
+    {
+        minX,
+        minY,
+        maxX - minX + 1,
+        maxY - minY + 1
+    };
+}
+
+static bool LoadTextureWithOpaqueSource(
+    SDL_Renderer* renderer,
+    const char* path,
+    SDL_Texture*& outTexture,
+    SDL_Rect& outSource)
+{
+    SDL_Surface* loaded =
+        IMG_Load(path);
+
+    if (!loaded)
+    {
+        std::cout
+            << "IMG_Load failed: "
+            << path
+            << " / "
+            << IMG_GetError()
+            << std::endl;
+
+        outTexture = nullptr;
+        outSource = { 0, 0, 1, 1 };
+
+        return false;
+    }
+
+    SDL_Surface* surface =
+        SDL_ConvertSurfaceFormat(
+            loaded,
+            SDL_PIXELFORMAT_RGBA32,
+            0);
+
+    SDL_FreeSurface(loaded);
+
+    if (!surface)
+    {
+        std::cout
+            << "SDL_ConvertSurfaceFormat failed: "
+            << path
+            << " / "
+            << SDL_GetError()
+            << std::endl;
+
+        outTexture = nullptr;
+        outSource = { 0, 0, 1, 1 };
+
+        return false;
+    }
+
+    outSource =
+        FindOpaqueBounds(surface);
+
+    outTexture =
+        SDL_CreateTextureFromSurface(
+            renderer,
+            surface);
+
+    SDL_FreeSurface(surface);
+
+    if (!outTexture)
+    {
+        std::cout
+            << "SDL_CreateTextureFromSurface failed: "
+            << path
+            << " / "
+            << SDL_GetError()
+            << std::endl;
+
+        outSource = { 0, 0, 1, 1 };
+
+        return false;
+    }
+
+    SDL_SetTextureBlendMode(
+        outTexture,
+        SDL_BLENDMODE_BLEND);
+
+    return true;
+}
+
+static bool LoadInventoryIconTextures(
+    SDL_Renderer* renderer,
+    InventoryIconTextures& icons)
+{
+    icons.bottle =
+        LoadTexture(renderer, "assets/sprites/bottleInventory.png");
+
+    icons.key =
+        LoadTexture(renderer, "assets/sprites/keyInventory.png");
+
+    icons.codebook =
+        LoadTexture(renderer, "assets/sprites/codebookInventory.png");
+
+    return
+        icons.bottle != nullptr &&
+        icons.key != nullptr &&
+        icons.codebook != nullptr;
+}
+
+static void DestroyInventoryIconTextures(
+    InventoryIconTextures& icons)
+{
+    if (icons.bottle)
+    {
+        SDL_DestroyTexture(icons.bottle);
+        icons.bottle = nullptr;
+    }
+
+    if (icons.key)
+    {
+        SDL_DestroyTexture(icons.key);
+        icons.key = nullptr;
+    }
+
+    if (icons.codebook)
+    {
+        SDL_DestroyTexture(icons.codebook);
+        icons.codebook = nullptr;
+    }
+}
+
+struct GameSpriteTextures
+{
+    SDL_Texture* floor = nullptr;
+
+    SDL_Texture* bottleMap = nullptr;
+    SDL_Texture* keyMap = nullptr;
+    SDL_Texture* codebookMap = nullptr;
+
+    SDL_Texture* bookshelf = nullptr;
+    SDL_Texture* chair = nullptr;
+    SDL_Texture* table = nullptr;
+    SDL_Texture* typewriter = nullptr;
+    SDL_Texture* bed = nullptr;
+
+    SDL_Texture* enemy = nullptr;
+
+    SDL_Texture* spritesheetPlayer = nullptr;
+    SDL_Texture* spritesheetOfficer = nullptr;
+    SDL_Texture* playerFire = nullptr;
+    SDL_Rect playerFireSrc = { 0, 0, 1, 1 };
+    SDL_Texture* officerFire = nullptr;
+    SDL_Rect officerFireSrc = { 0, 0, 1, 1 };
+
+    SDL_Rect enemySource =
+    {
+        136,
+        1,
+        353,
+        641
+    };
+
+    SDL_Texture* cabinet = nullptr;
+    SDL_Rect cabinetSrc = { 0, 0, 1, 1 };
+    SDL_Texture* enemyDead = nullptr;
+    SDL_Rect enemyDeadSrc = { 0, 0, 1, 1 };
+    SDL_Texture* enemyDeadB = nullptr;
+    SDL_Rect enemyDeadBSrc = { 0, 0, 1, 1 };
+    SDL_Texture* officerDead = nullptr;
+    SDL_Rect officerDeadSrc = { 0, 0, 1, 1 };
+    SDL_Texture* officerDeadB = nullptr;
+    SDL_Rect officerDeadBSrc = { 0, 0, 1, 1 };
+    SDL_Texture* playerDead = nullptr;
+    SDL_Rect playerDeadSrc = { 0, 0, 1, 1 };
+};
+
+static void DestroyTextureIfLoaded(SDL_Texture*& texture)
+{
+    if (texture)
+    {
+        SDL_DestroyTexture(texture);
+        texture = nullptr;
+    }
+}
+
+static bool LoadGameSpriteTextures(
+    SDL_Renderer* renderer,
+    GameSpriteTextures& textures)
+{
+    textures.floor =
+        LoadTexture(renderer, "assets/sprites/floor.png");
+
+    textures.bottleMap =
+        LoadTexture(renderer, "assets/sprites/bottleMap.png");
+
+    textures.keyMap =
+        LoadTexture(renderer, "assets/sprites/keyMap.png");
+
+    textures.codebookMap =
+        LoadTexture(renderer, "assets/sprites/codebookMap.png");
+
+    textures.bookshelf =
+        LoadTexture(renderer, "assets/sprites/bookshelf.png");
+
+    textures.chair =
+        LoadTexture(renderer, "assets/sprites/chair.png");
+
+    textures.table =
+        LoadTexture(renderer, "assets/sprites/table.png");
+
+    textures.typewriter =
+        LoadTexture(renderer, "assets/sprites/typewriter.png");
+
+    textures.bed =
+        LoadTexture(renderer, "assets/sprites/bed.png");
+
+    textures.enemy =
+        LoadTexture(renderer, "assets/sprites/enemy.png");
+
+    textures.enemyDead =
+        LoadTexture(renderer, "assets/sprites/enemyDead.png");
+        
+    textures.enemyDeadB =
+        LoadTexture(renderer, "assets/sprites/enemyDeadB.png");
+
+    textures.officerDead =
+        LoadTexture(renderer, "assets/sprites/officerDead.png");
+
+    textures.officerDeadB =
+        LoadTexture(renderer, "assets/sprites/officerDeadB.png");
+
+    textures.playerDead =
+        LoadTexture(renderer, "assets/sprites/playerDead.png");
+
+    textures.spritesheetPlayer =
+        LoadTexture(renderer, "assets/sprites/spritesheetPlayer.png");
+    
+    textures.spritesheetOfficer =
+        LoadTexture(renderer, "assets/sprites/spritesheetOfficer.png");
+        
+    LoadTextureWithOpaqueSource(
+        renderer,
+        "assets/sprites/playerFire.png",
+        textures.playerFire,
+        textures.playerFireSrc);
+    
+    LoadTextureWithOpaqueSource(
+        renderer,
+        "assets/sprites/officerFire.png",
+        textures.officerFire,
+        textures.officerFireSrc);
+        
+    LoadTextureWithOpaqueSource(
+        renderer,
+        "assets/sprites/enemyDead.png",
+        textures.enemyDead,
+        textures.enemyDeadSrc);
+        
+    LoadTextureWithOpaqueSource(
+        renderer,
+        "assets/sprites/enemyDeadB.png",
+        textures.enemyDeadB,
+        textures.enemyDeadBSrc);
+        
+    LoadTextureWithOpaqueSource(
+        renderer,
+        "assets/sprites/officerDead.png",
+        textures.officerDead,
+        textures.officerDeadSrc);
+        
+    LoadTextureWithOpaqueSource(
+        renderer,
+        "assets/sprites/officerDeadB.png",
+        textures.officerDeadB,
+        textures.officerDeadBSrc);
+        
+    LoadTextureWithOpaqueSource(
+        renderer,
+        "assets/sprites/playerDead.png",
+        textures.playerDead,
+        textures.playerDeadSrc);
+
+    LoadTextureWithOpaqueSource(
+        renderer,
+        "assets/sprites/cabinet.png",
+        textures.cabinet,
+        textures.cabinetSrc);
+
+    return
+        textures.floor &&
+        textures.bottleMap &&
+        textures.keyMap &&
+        textures.codebookMap &&
+        textures.bookshelf &&
+        textures.chair &&
+        textures.table &&
+        textures.typewriter &&
+        textures.enemy &&
+        textures.cabinet &&
+        textures.spritesheetPlayer &&
+        textures.spritesheetOfficer &&
+        textures.playerFire &&
+        textures.officerFire;
+}
+
+static void DestroyGameSpriteTextures(GameSpriteTextures& textures)
+{
+    DestroyTextureIfLoaded(textures.floor);
+
+    DestroyTextureIfLoaded(textures.bottleMap);
+    DestroyTextureIfLoaded(textures.keyMap);
+    DestroyTextureIfLoaded(textures.codebookMap);
+
+    DestroyTextureIfLoaded(textures.bookshelf);
+    DestroyTextureIfLoaded(textures.chair);
+    DestroyTextureIfLoaded(textures.table);
+    DestroyTextureIfLoaded(textures.typewriter);
+    DestroyTextureIfLoaded(textures.bed);
+
+    DestroyTextureIfLoaded(textures.enemy);
+
+    DestroyTextureIfLoaded(textures.cabinet);
+
+    DestroyTextureIfLoaded(textures.spritesheetPlayer);
+    DestroyTextureIfLoaded(textures.spritesheetOfficer);
+
+    DestroyTextureIfLoaded(textures.playerFire);
+    DestroyTextureIfLoaded(textures.officerFire);
+}
+
+static SDL_Texture* GetInventoryIconTexture(
+    const InventoryIconTextures& icons,
+    ItemType type)
+{
+    switch (type)
+    {
+    case ItemType::Bottle:
+        return icons.bottle;
+
+    case ItemType::Key:
+        return icons.key;
+
+    case ItemType::Target:
+        return icons.codebook;
+    }
+
+    return nullptr;
+}
+
+static SDL_Rect MakeAspectFitRect(
+    SDL_Texture* texture,
+    const SDL_Rect& bounds,
+    int padding)
+{
+    SDL_Rect content =
+    {
+        bounds.x + padding,
+        bounds.y + padding,
+        bounds.w - padding * 2,
+        bounds.h - padding * 2
+    };
+
+    int textureW = 0;
+    int textureH = 0;
+
+    if (SDL_QueryTexture(
+            texture,
+            nullptr,
+            nullptr,
+            &textureW,
+            &textureH) != 0 ||
+        textureW <= 0 ||
+        textureH <= 0)
+    {
+        return content;
+    }
+
+    float scaleX =
+        static_cast<float>(content.w) /
+        static_cast<float>(textureW);
+
+    float scaleY =
+        static_cast<float>(content.h) /
+        static_cast<float>(textureH);
+
+    float scale = std::min(scaleX, scaleY);
+
+    int drawW =
+        static_cast<int>(std::round(textureW * scale));
+
+    int drawH =
+        static_cast<int>(std::round(textureH * scale));
+
+    SDL_Rect dst =
+    {
+        content.x + content.w / 2 - drawW / 2,
+        content.y + content.h / 2 - drawH / 2,
+        drawW,
+        drawH
+    };
+
+    return dst;
+}
+
 void DrawInventoryHUD(
     SDL_Renderer* renderer,
     TTF_Font* font,
-    const Inventory& inventory)
+    const Inventory& inventory,
+    const InventoryIconTextures& icons)
 {
     static constexpr int SLOT_SIZE = 44;
     static constexpr int SLOT_GAP = 8;
     static constexpr int START_X = 16;
     static constexpr int START_Y = 16;
+    static constexpr int ICON_PADDING = 5;
 
     SDL_Rect slots[3] =
     {
@@ -2271,7 +3237,9 @@ void DrawInventoryHUD(
         { START_X + (SLOT_SIZE + SLOT_GAP) * 2, START_Y, SLOT_SIZE, SLOT_SIZE }
     };
 
-    const char* letters[3] = { "B", "K", "T" };
+    ItemType types[3] = {ItemType::Bottle, ItemType::Key, ItemType::Target};
+
+    const char* fallbackLetters[3] = { "B", "K", "T" };
     bool owned[3] =
     {
         inventory.hasBottle,
@@ -2289,12 +3257,23 @@ void DrawInventoryHUD(
         SDL_SetRenderDrawColor(renderer, 255, 255, 255, 220);
         SDL_RenderDrawRect(renderer, &slots[i]);
 
-        if (owned[i])
+        if (!owned[i])
+        {
+            continue;
+        }
+
+        SDL_Texture* icon = GetInventoryIconTexture(icons, types[i]);
+        if (icon)
+        {
+            SDL_Rect iconDst = MakeAspectFitRect(icon, slots[i], ICON_PADDING);
+            SDL_RenderCopy(renderer, icon, nullptr, &iconDst);
+        }
+        else
         {
             DrawTextInRect(
                 renderer,
                 font,
-                letters[i],
+                fallbackLetters[i],
                 slots[i],
                 { 255, 255, 255, 255 });
         }
@@ -2676,6 +3655,46 @@ static bool FindInteractableRectById(
     return false;
 }
 
+static bool TryFindNearestCabinetRect(
+    const SDL_Rect& player,
+    SDL_Rect& outRect)
+{
+    static constexpr float CABINET_HIDE_RANGE = 96.0f;
+    const float hideRangeSq =
+        CABINET_HIDE_RANGE * CABINET_HIDE_RANGE;
+
+    Vec2 playerCenter =
+        GetRectCenter(player);
+
+    bool found = false;
+    float bestDistSq = hideRangeSq;
+
+    for (const auto& interactable : stageInteractables)
+    {
+        if (interactable.id != "cabinet")
+        {
+            continue;
+        }
+
+        Vec2 cabinetCenter =
+            GetRectCenter(interactable.rect);
+
+        float distSq =
+            DistanceSqLocal(playerCenter, cabinetCenter);
+
+        if (distSq > bestDistSq)
+        {
+            continue;
+        }
+
+        bestDistSq = distSq;
+        outRect = interactable.rect;
+        found = true;
+    }
+
+    return found;
+}
+
 static bool TryHideDraggedBodyInCabinet(
     const SDL_Rect& player,
     std::vector<Enemy>& enemies,
@@ -2687,24 +3706,15 @@ static bool TryHideDraggedBodyInCabinet(
     }
 
     SDL_Rect cabinetRect;
-    if (!FindInteractableRectById("cabinet", cabinetRect))
+
+    if (!TryFindNearestCabinetRect(player, cabinetRect))
     {
-        std::cout << "Cabinet not found." << std::endl;
+        std::cout << "No cabinet in range." << std::endl;
         return false;
     }
 
-    static constexpr float CABINET_HIDE_RANGE = 96.0f;
-    const float hideRangeSq = CABINET_HIDE_RANGE * CABINET_HIDE_RANGE;
-
-    Vec2 playerCenter = GetRectCenter(player);
-    Vec2 cabinetCenter = GetRectCenter(cabinetRect);
-
-    if (DistanceSqLocal(playerCenter, cabinetCenter) > hideRangeSq)
-    {
-        return false;
-    }
-
-    Enemy& body = enemies[draggedBodyIndex];
+    Enemy& body =
+        enemies[draggedBodyIndex];
 
     body.bodyHidden = true;
     body.bodyDragged = false;
@@ -2717,6 +3727,7 @@ static bool TryHideDraggedBodyInCabinet(
     draggedBodyIndex = -1;
 
     std::cout << "Body hidden in cabinet." << std::endl;
+
     return true;
 }
 
@@ -3319,9 +4330,28 @@ void ConsumeEnemyShotTrails(
             BULLET_TRAIL_LIFETIME
         });
 
+        enemy.fireVisualTimer = 0.16f;
         enemy.shotTrailPending = false;
         enemy.shotTrailStart = { 0.0f, 0.0f };
         enemy.shotTrailEnd = { 0.0f, 0.0f };
+    }
+}
+
+static void UpdateEnemyVisualTimers(
+    std::vector<Enemy>& enemies,
+    float dt)
+{
+    for (auto& enemy : enemies)
+    {
+        if (enemy.fireVisualTimer > 0.0f)
+        {
+            enemy.fireVisualTimer -= dt;
+
+            if (enemy.fireVisualTimer < 0.0f)
+            {
+                enemy.fireVisualTimer = 0.0f;
+            }
+        }
     }
 }
 
@@ -3355,6 +4385,345 @@ void DrawGunHUD(
         text.c_str(),
         slot,
         { 255, 255, 255, 255 });
+}
+
+static constexpr int CHARACTER_SHEET_COLS = 4;
+static constexpr int CHARACTER_SHEET_ROWS = 4;
+static constexpr int CHARACTER_SHEET_FRAME_W = 512;
+static constexpr int CHARACTER_SHEET_FRAME_H = 512;
+
+static constexpr int SHEET_ROW_DOWN = 0;
+static constexpr int SHEET_ROW_RIGHT = 1;
+static constexpr int SHEET_ROW_UP = 2;
+static constexpr int SHEET_ROW_LEFT = 3;
+
+static SDL_Rect GetCharacterSheetFrame(
+    SDL_Texture* texture,
+    int row,
+    int frame)
+{
+    if (!texture)
+    {
+        return { 0, 0, 1, 1 };
+    }
+
+    int texW = 0;
+    int texH = 0;
+
+    SDL_QueryTexture(
+        texture,
+        nullptr,
+        nullptr,
+        &texW,
+        &texH);
+
+    if (texW <= 0 || texH <= 0)
+    {
+        return { 0, 0, 1, 1 };
+    }
+
+    int frameW =
+        texW / CHARACTER_SHEET_COLS;
+
+    int frameH =
+        texH / CHARACTER_SHEET_ROWS;
+
+    frame %= CHARACTER_SHEET_COLS;
+
+    if (frame < 0)
+    {
+        frame += CHARACTER_SHEET_COLS;
+    }
+
+    row = std::clamp(
+        row,
+        0,
+        CHARACTER_SHEET_ROWS - 1);
+
+    return
+    {
+        frame * frameW,
+        row * frameH,
+        frameW,
+        frameH
+    };
+}
+
+static int GetSpriteRowFromAngle(
+    float angle)
+{
+    float x =
+        std::cos(angle);
+
+    float y =
+        std::sin(angle);
+
+    if (std::fabs(x) >= std::fabs(y))
+    {
+        return x >= 0.0f
+            ? SHEET_ROW_LEFT
+            : SHEET_ROW_RIGHT;
+    }
+
+    return y >= 0.0f
+        ? SHEET_ROW_DOWN
+        : SHEET_ROW_UP;
+}
+
+static bool IsPlayerMoveScancode(
+    SDL_Scancode scancode)
+{
+    return
+        scancode == SDL_SCANCODE_W ||
+        scancode == SDL_SCANCODE_A ||
+        scancode == SDL_SCANCODE_S ||
+        scancode == SDL_SCANCODE_D;
+}
+
+static Vec2 GetVisualDirFromMoveScancode(
+    SDL_Scancode scancode)
+{
+    switch (scancode)
+    {
+    case SDL_SCANCODE_W:
+        return { 0.0f, -1.0f };
+
+    case SDL_SCANCODE_S:
+        return { 0.0f, 1.0f };
+
+    case SDL_SCANCODE_A:
+        return { -1.0f, 0.0f };
+
+    case SDL_SCANCODE_D:
+        return { 1.0f, 0.0f };
+
+    default:
+        return { 0.0f, 0.0f };
+    }
+}
+
+static Vec2 MakePlayerVisualMoveDir(
+    const Uint8* key,
+    Vec2 movementDir)
+{
+    if (lastPlayerMoveFacingKey != SDL_SCANCODE_UNKNOWN &&
+        key[lastPlayerMoveFacingKey])
+    {
+        return GetVisualDirFromMoveScancode(
+            lastPlayerMoveFacingKey);
+    }
+
+    if (key[SDL_SCANCODE_W] && !key[SDL_SCANCODE_S])
+    {
+        return { 0.0f, -1.0f };
+    }
+
+    if (key[SDL_SCANCODE_S] && !key[SDL_SCANCODE_W])
+    {
+        return { 0.0f, 1.0f };
+    }
+
+    if (key[SDL_SCANCODE_A] && !key[SDL_SCANCODE_D])
+    {
+        return { -1.0f, 0.0f };
+    }
+
+    if (key[SDL_SCANCODE_D] && !key[SDL_SCANCODE_A])
+    {
+        return { 1.0f, 0.0f };
+    }
+
+    return movementDir;
+}
+
+static float GetPlayerAnimFrameDuration(
+    MoveMode mode)
+{
+    if (mode == SNEAK)
+    {
+        return 0.22f;
+    }
+
+    if (mode == WALK)
+    {
+        return 0.14f;
+    }
+
+    if (mode == RUN)
+    {
+        return 0.08f;
+    }
+
+    if (mode == INJURED)
+    {
+        return 0.18f;
+    }
+
+    return 0.14f;
+}
+
+static void UpdatePlayerVisualState(
+    MoveMode mode,
+    bool moving,
+    Vec2 moveDir,
+    float dt)
+{
+    if (playerFireVisualTimer > 0.0f)
+    {
+        playerFireVisualTimer -= dt;
+
+        if (playerFireVisualTimer < 0.0f)
+        {
+            playerFireVisualTimer = 0.0f;
+        }
+    }
+
+    if (moving && LengthSq(moveDir) > 0.000001f)
+    {
+        playerVisualFacingAngle =
+            std::atan2(moveDir.y, moveDir.x);
+    }
+
+    if (!moving)
+    {
+        playerAnimTimer = 0.0f;
+        playerAnimFrame = 0;
+        return;
+    }
+
+    playerAnimTimer += dt;
+
+    float frameDuration =
+        GetPlayerAnimFrameDuration(mode);
+
+    while (playerAnimTimer >= frameDuration)
+    {
+        playerAnimTimer -= frameDuration;
+        playerAnimFrame =
+            (playerAnimFrame + 1) % CHARACTER_SHEET_COLS;
+    }
+}
+
+static void StartPlayerFireVisual(
+    const SDL_Rect& player,
+    Vec2 targetWorld)
+{
+    Vec2 playerCenter =
+        GetRectCenter(player);
+
+    Vec2 toTarget =
+        targetWorld - playerCenter;
+
+    if (LengthSq(toTarget) > 0.000001f)
+    {
+        playerFireVisualAngle =
+            std::atan2(toTarget.y, toTarget.x);
+
+        playerVisualFacingAngle =
+            playerFireVisualAngle;
+    }
+
+    playerFireVisualTimer =
+        PLAYER_FIRE_VISUAL_DURATION;
+}
+
+static bool TryDrawPlayerTexture(
+    SDL_Renderer* renderer,
+    const SDL_Rect& player,
+    const Camera2D& camera,
+    const GameSpriteTextures& textures,
+    int playerHP,
+    GameState gameState)
+{
+    SDL_Rect playerScreen =
+        camera.WorldToScreenRect(player);
+
+    if (!IsScreenRectVisible(playerScreen))
+    {
+        return true;
+    }
+
+    if ((playerHP <= 0 || gameState == LOSE) &&
+        textures.playerDead)
+    {
+        SDL_Rect deadWorld =
+            MakeCenteredWorldRectFromSource(
+                player,
+                textures.playerDeadSrc,
+                64);
+
+        SDL_Rect deadScreen = camera.WorldToScreenRect(deadWorld);
+
+        SDL_RenderCopy(
+            renderer,
+            textures.playerDead,
+            &textures.playerDeadSrc,
+            &deadScreen);
+
+        return true;
+    }
+
+    if (playerFireVisualTimer > 0.0f &&
+        textures.playerFire)
+    {
+        SDL_Rect fireWorld =
+            MakeCenteredWorldRectFromSource(
+                player,
+                textures.playerFireSrc,
+                PLAYER_FIRE_RENDER_LONG_SIDE);
+
+        SDL_Rect fireScreen = camera.WorldToScreenRect(fireWorld);
+
+        SDL_Point center =
+        {
+            fireScreen.w / 2,
+            fireScreen.h / 2
+        };
+
+        double angleDeg =
+            static_cast<double>(playerFireVisualAngle) *
+            180.0 / 3.14159265358979323846;
+
+        SDL_RenderCopyEx(
+            renderer,
+            textures.playerFire,
+            &textures.playerFireSrc,
+            &fireScreen,
+            angleDeg,
+            &center,
+            SDL_FLIP_NONE);
+
+        return true;
+    }
+
+    if (textures.spritesheetPlayer)
+    {
+        int row = GetSpriteRowFromAngle(playerVisualFacingAngle);
+
+        SDL_Rect source =
+            GetCharacterSheetFrame(
+                textures.spritesheetPlayer,
+                row,
+                playerAnimFrame);
+
+        SDL_Rect spriteWorld =
+            MakeCenteredWorldRectBySize(
+                player,
+                PLAYER_SPRITE_RENDER_SIZE,
+                PLAYER_SPRITE_RENDER_SIZE);
+
+        SDL_Rect spriteScreen = camera.WorldToScreenRect(spriteWorld);
+
+        SDL_RenderCopy(
+            renderer,
+            textures.spritesheetPlayer,
+            &source,
+            &spriteScreen);
+
+        return true;
+    }
+
+    return false;
 }
 
 static float Clamp01(float value)
@@ -3454,6 +4823,796 @@ void DrawPauseOverlay(SDL_Renderer* renderer, TTF_Font* font)
     DrawCenteredText(renderer, font, "PAUSED");
 }
 
+static bool RectsOverlap(
+    const SDL_Rect& a,
+    const SDL_Rect& b)
+{
+    if (a.x + a.w < b.x)
+    {
+        return false;
+    }
+
+    if (b.x + b.w < a.x)
+    {
+        return false;
+    }
+
+    if (a.y + a.h < b.y)
+    {
+        return false;
+    }
+
+    if (b.y + b.h < a.y)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool IsScreenRectVisible(const SDL_Rect& rect)
+{
+    SDL_Rect screen =
+    {
+        0,
+        0,
+        SCREEN_WIDTH,
+        SCREEN_HEIGHT
+    };
+
+    return RectsOverlap(rect, screen);
+}
+
+static void DrawCabinetSprites(
+    SDL_Renderer* renderer,
+    const Camera2D& camera,
+    const GameSpriteTextures& textures)
+{
+    for (const auto& interactable : stageInteractables)
+    {
+        if (interactable.id != "cabinet")
+        {
+            continue;
+        }
+
+        SDL_Rect screenRect =
+            camera.WorldToScreenRect(interactable.rect);
+
+        if (!IsScreenRectVisible(screenRect))
+        {
+            continue;
+        }
+
+        if (textures.cabinet)
+        {
+            SDL_RenderCopy(
+                renderer,
+                textures.cabinet,
+                &textures.cabinetSrc,
+                &screenRect);
+        }
+        else
+        {
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+            SDL_SetRenderDrawColor(renderer, 70, 55, 35, 255);
+            SDL_RenderFillRect(renderer, &screenRect);
+
+            SDL_SetRenderDrawColor(renderer, 180, 145, 90, 255);
+            SDL_RenderDrawRect(renderer, &screenRect);
+        }
+    }
+}
+
+static constexpr int CORPSE_RENDER_LONG_SIDE = 72;
+
+static SDL_Texture* GetCorpseTexture(
+    const GameSpriteTextures& textures,
+    const Enemy& enemy,
+    SDL_Rect& outSource)
+{
+    bool killedByGun =
+        !enemy.bodyDraggable;
+
+    if (enemy.kind == EnemyKind::Officer)
+    {
+        if (killedByGun)
+        {
+            outSource = textures.officerDeadBSrc;
+            return textures.officerDeadB;
+        }
+
+        outSource = textures.officerDeadSrc;
+        return textures.officerDead;
+    }
+
+    if (killedByGun)
+    {
+        outSource = textures.enemyDeadBSrc;
+        return textures.enemyDeadB;
+    }
+
+    outSource = textures.enemyDeadSrc;
+    return textures.enemyDead;
+}
+
+static bool TryDrawCorpseTexture(
+    SDL_Renderer* renderer,
+    const Enemy& enemy,
+    const Camera2D& camera,
+    const GameSpriteTextures& textures)
+{
+    if (enemy.state != EnemyState::Dead)
+    {
+        return false;
+    }
+
+    if (enemy.bodyHidden)
+    {
+        return true;
+    }
+
+    SDL_Rect source = {0, 0, 1, 1};
+
+    SDL_Texture* texture =
+        GetCorpseTexture(
+            textures,
+            enemy,
+            source);
+
+    if (!texture)
+    {
+        return false;
+    }
+
+    SDL_Rect corpseWorld =
+        MakeCenteredWorldRectFromSource(
+            enemy.rect,
+            source,
+            CORPSE_RENDER_LONG_SIDE);
+
+    SDL_Rect corpseScreen =
+        camera.WorldToScreenRect(corpseWorld);
+
+    if (!IsScreenRectVisible(corpseScreen))
+    {
+        return true;
+    }
+
+    SDL_RenderCopy(
+        renderer,
+        texture,
+        &source,
+        &corpseScreen);
+
+    return true;
+}
+
+static SDL_Rect MakeEnemyFOVWorldBounds(const Enemy& enemy)
+{
+    Vec2 center = GetRectCenter(enemy.rect);
+
+    int range =
+        static_cast<int>(std::ceil(enemy.viewDist)) + 96;
+
+    return
+    {
+        static_cast<int>(center.x) - range,
+        static_cast<int>(center.y) - range,
+        range * 2,
+        range * 2
+    };
+}
+
+static void CollectWallsForFOV(
+    const std::vector<Wall>& walls,
+    const SDL_Rect& fovBounds,
+    std::vector<Wall>& outWalls)
+{
+    outWalls.clear();
+
+    for (const auto& wall : walls)
+    {
+        if (!RectsOverlap(wall.rect, fovBounds))
+        {
+            continue;
+        }
+
+        outWalls.push_back(wall);
+    }
+}
+
+static SDL_Rect MakeCenteredWorldRect(
+    const SDL_Rect& base,
+    int width,
+    int height)
+{
+    Vec2 center = GetRectCenter(base);
+
+    return
+    {
+        static_cast<int>(std::round(center.x - width * 0.5f)),
+        static_cast<int>(std::round(center.y - height * 0.5f)),
+        width,
+        height
+    };
+}
+
+static bool DrawTextureInWorldRect(
+    SDL_Renderer* renderer,
+    SDL_Texture* texture,
+    const SDL_Rect& worldRect,
+    const Camera2D& camera,
+    int padding = 0)
+{
+    if (!texture)
+    {
+        return false;
+    }
+
+    SDL_Rect screenRect =
+        camera.WorldToScreenRect(worldRect);
+
+    if (!IsScreenRectVisible(screenRect))
+    {
+        return true;
+    }
+
+    SDL_Rect dst =
+        MakeAspectFitRect(texture, screenRect, padding);
+
+    SDL_RenderCopy(renderer, texture, nullptr, &dst);
+
+    return true;
+}
+
+static SDL_Texture* GetWorldItemMapTexture(
+    const GameSpriteTextures& textures,
+    ItemType type)
+{
+    switch (type)
+    {
+    case ItemType::Bottle:
+        return textures.bottleMap;
+
+    case ItemType::Key:
+        return textures.keyMap;
+
+    case ItemType::Target:
+        return textures.codebookMap;
+    }
+
+    return nullptr;
+}
+
+static SDL_Texture* GetEtcTexture(
+    const GameSpriteTextures& textures,
+    const StageEtcDef& etc)
+{
+    std::string key = etc.name;
+
+    if (key.empty())
+    {
+        key = etc.type;
+    }
+
+    if (key == "bookshelf")
+    {
+        return textures.bookshelf;
+    }
+
+    if (key == "chair")
+    {
+        return textures.chair;
+    }
+
+    if (key == "table")
+    {
+        return textures.table;
+    }
+
+    if (key == "typewriter")
+    {
+        return textures.typewriter;
+    }
+
+    if (key == "bed")
+    {
+        return textures.bed;
+    }
+
+    return nullptr;
+}
+
+static void DrawFloor(
+    SDL_Renderer* renderer,
+    SDL_Texture* floorTexture,
+    Camera2D& camera)
+{
+    for (const auto& tileWorld : reachableFloorTiles)
+    {
+        SDL_Rect tileScreen =
+            camera.WorldToScreenRect(tileWorld);
+
+        if (!IsScreenRectVisible(tileScreen))
+        {
+            continue;
+        }
+
+        if (floorTexture)
+        {
+            SDL_RenderCopy(
+                renderer,
+                floorTexture,
+                nullptr,
+                &tileScreen);
+        }
+        else
+        {
+            SDL_SetRenderDrawColor(renderer, 28, 28, 28, 255);
+            SDL_RenderFillRect(renderer, &tileScreen);
+        }
+    }
+}
+
+static void DrawWorldItemSprites(
+    SDL_Renderer* renderer,
+    TTF_Font* font,
+    const std::vector<WorldItem>& items,
+    const Camera2D& camera,
+    const GameSpriteTextures& textures)
+{
+    for (const auto& item : items)
+    {
+        if (item.picked)
+        {
+            continue;
+        }
+
+        SDL_Rect itemWorldRect =
+            MakeCenteredWorldRect(item.rect, 32, 32);
+
+        SDL_Rect screenRect =
+            camera.WorldToScreenRect(itemWorldRect);
+
+        if (!IsScreenRectVisible(screenRect))
+        {
+            continue;
+        }
+
+        SDL_Texture* texture =
+            GetWorldItemMapTexture(textures, item.type);
+
+        if (texture)
+        {
+            SDL_Rect dst =
+                MakeAspectFitRect(texture, screenRect, 0);
+
+            SDL_RenderCopy(renderer, texture, nullptr, &dst);
+        }
+        else
+        {
+            SDL_SetRenderDrawColor(renderer, 230, 230, 230, 255);
+            SDL_RenderFillRect(renderer, &screenRect);
+
+            SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+            SDL_RenderDrawRect(renderer, &screenRect);
+
+            DrawTextInRect(
+                renderer,
+                font,
+                GetItemLetter(item.type),
+                screenRect,
+                { 20, 20, 20, 255 });
+        }
+    }
+}
+
+static double GetDirectionAngleDegrees(
+    const std::string& dir)
+{
+    if (dir == "right")
+    {
+        return 0.0;
+    }
+
+    if (dir == "down")
+    {
+        return 90.0;
+    }
+
+    if (dir == "left")
+    {
+        return 180.0;
+    }
+
+    if (dir == "up")
+    {
+        return -90.0;
+    }
+
+    return 0.0;
+}
+
+static bool IsEtcNamed(
+    const StageEtcDef& etc,
+    const std::string& name)
+{
+    return etc.name == name;
+}
+
+static const StageEtcDef* FindNearestTable(
+    const StageEtcDef& source)
+{
+    const StageEtcDef* nearest = nullptr;
+    float nearestDistSq = 999999999.0f;
+
+    Vec2 sourceCenter =
+        GetRectCenter(source.rect);
+
+    for (const auto& etc : stageEtcs)
+    {
+        if (!IsEtcNamed(etc, "table"))
+        {
+            continue;
+        }
+
+        Vec2 tableCenter =
+            GetRectCenter(etc.rect);
+
+        float distSq =
+            DistanceSqLocal(sourceCenter, tableCenter);
+
+        if (distSq < nearestDistSq)
+        {
+            nearest = &etc;
+            nearestDistSq = distSq;
+        }
+    }
+
+    return nearest;
+}
+
+static constexpr double ETC_RAD_TO_DEG =
+    180.0 / 3.14159265358979323846;
+
+static constexpr double CHAIR_TEXTURE_FORWARD_DEG = 90.0;
+
+static constexpr double TYPEWRITER_TEXTURE_FORWARD_DEG = 90.0;
+
+static double GetCardinalAngleToTarget(
+    Vec2 from,
+    Vec2 to)
+{
+    Vec2 delta =
+        to - from;
+
+    if (std::fabs(delta.x) >= std::fabs(delta.y))
+    {
+        return delta.x >= 0.0f
+            ? 0.0
+            : 180.0;
+    }
+
+    return delta.y >= 0.0f
+        ? 90.0
+        : -90.0;
+}
+
+static double GetChairRotationDegrees(
+    const StageEtcDef& chair)
+{
+    const StageEtcDef* table =
+        FindNearestTable(chair);
+
+    if (table)
+    {
+        Vec2 chairCenter =
+            GetRectCenter(chair.rect);
+
+        Vec2 tableCenter =
+            GetRectCenter(table->rect);
+
+        double worldDeg =
+            GetCardinalAngleToTarget(
+                chairCenter,
+                tableCenter);
+
+        return worldDeg - CHAIR_TEXTURE_FORWARD_DEG;
+    }
+
+    return
+        GetDirectionAngleDegrees(chair.dir) -
+        CHAIR_TEXTURE_FORWARD_DEG;
+}
+
+static double GetEtcRotationDegrees(
+    const StageEtcDef& etc)
+{
+    if (etc.name == "chair")
+    {
+        return GetChairRotationDegrees(etc);
+    }
+
+    if (etc.name == "typewriter")
+    {
+        return
+            GetDirectionAngleDegrees(etc.dir) -
+            TYPEWRITER_TEXTURE_FORWARD_DEG;
+    }
+
+    return 0.0;
+}
+
+static bool ShouldRotateEtc(
+    const StageEtcDef& etc)
+{
+    return
+        etc.name == "chair" ||
+        etc.name == "typewriter";
+}
+
+static void DrawEtcSprites(
+    SDL_Renderer* renderer,
+    const Camera2D& camera,
+    const GameSpriteTextures& textures)
+{
+    for (const auto& etc : stageEtcs)
+    {
+        SDL_Rect screenRect =
+            camera.WorldToScreenRect(etc.rect);
+
+        if (!IsScreenRectVisible(screenRect))
+        {
+            continue;
+        }
+
+        SDL_Texture* texture =
+            GetEtcTexture(textures, etc);
+
+        if (texture)
+        {
+            if (ShouldRotateEtc(etc))
+            {
+                SDL_Point center =
+                {
+                    screenRect.w / 2,
+                    screenRect.h / 2
+                };
+                SDL_RenderCopyEx(
+                    renderer,
+                    texture,
+                    nullptr,
+                    &screenRect,
+                    GetEtcRotationDegrees(etc),
+                    &center,
+                    SDL_FLIP_NONE);
+            }
+            else
+            {
+                SDL_RenderCopy(
+                    renderer,
+                    texture,
+                    nullptr,
+                    &screenRect);
+            }
+        }
+        else
+        {
+            SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+            SDL_SetRenderDrawColor(renderer, 85, 65, 45, 220);
+            SDL_RenderFillRect(renderer, &screenRect);
+
+            SDL_SetRenderDrawColor(renderer, 160, 130, 90, 255);
+            SDL_RenderDrawRect(renderer, &screenRect);
+        }
+    }
+}
+
+static constexpr double RAD_TO_DEG =
+    180.0 / 3.14159265358979323846;
+
+static constexpr double ENEMY_TEXTURE_FORWARD_OFFSET_DEG = 90.0;
+
+static bool ShouldUseEnemyTexture(const Enemy& enemy)
+{
+    if (enemy.state == EnemyState::Dead)
+    {
+        return false;
+    }
+
+    if (enemy.kind == EnemyKind::Officer)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static double GetEnemyTextureAngleDegrees(const Enemy& enemy)
+{
+    float visualAngle =
+        enemy.angle + enemy.headSweepOffset;
+
+    return
+        static_cast<double>(visualAngle) *
+        RAD_TO_DEG +
+        ENEMY_TEXTURE_FORWARD_OFFSET_DEG;
+}
+
+static constexpr int ENEMY_TEXTURE_RENDER_WIDTH = 40;
+static constexpr int ENEMY_TEXTURE_RENDER_HEIGHT = 72;
+
+static bool TryDrawEnemyTexture(
+    SDL_Renderer* renderer,
+    const Enemy& enemy,
+    const Camera2D& camera,
+    const GameSpriteTextures& textures)
+{
+    if (!ShouldUseEnemyTexture(enemy))
+    {
+        return false;
+    }
+
+    if (!textures.enemy)
+    {
+        return false;
+    }
+
+    SDL_Rect enemyVisualWorld =
+        MakeCenteredWorldRectBySize(
+            enemy.rect,
+            ENEMY_TEXTURE_RENDER_WIDTH,
+            ENEMY_TEXTURE_RENDER_HEIGHT);
+
+    SDL_Rect enemyScreen =
+        camera.WorldToScreenRect(enemyVisualWorld);
+
+    if (!IsScreenRectVisible(enemyScreen))
+    {
+        return true;
+    }
+
+    SDL_Point center =
+    {
+        enemyScreen.w / 2,
+        enemyScreen.h / 2
+    };
+
+    SDL_Rect source =
+        textures.enemySource;
+
+    double angleDeg =
+        GetEnemyTextureAngleDegrees(enemy);
+
+    SDL_RenderCopyEx(
+        renderer,
+        textures.enemy,
+        &source,
+        &enemyScreen,
+        angleDeg,
+        &center,
+        SDL_FLIP_NONE);
+
+    return true;
+}
+
+static constexpr int OFFICER_SPRITE_RENDER_SIZE = 56;
+static constexpr int OFFICER_FIRE_RENDER_LONG_SIDE = 76;
+static constexpr double OFFICER_FIRE_FORWARD_OFFSET_DEG = 0.0;
+
+static bool TryDrawOfficerTexture(
+    SDL_Renderer* renderer,
+    const Enemy& enemy,
+    const Camera2D& camera,
+    const GameSpriteTextures& textures)
+{
+    if (enemy.state == EnemyState::Dead)
+    {
+        return false;
+    }
+
+    if (enemy.kind != EnemyKind::Officer)
+    {
+        return false;
+    }
+
+    float visualAngle =
+        enemy.angle;
+
+    if (enemy.fireVisualTimer > 0.0f &&
+        textures.officerFire)
+    {
+        SDL_Rect fireWorld =
+            MakeCenteredWorldRectFromSource(
+                enemy.rect,
+                textures.officerFireSrc,
+                OFFICER_FIRE_RENDER_LONG_SIDE);
+
+        SDL_Rect fireScreen =
+            camera.WorldToScreenRect(fireWorld);
+
+        if (!IsScreenRectVisible(fireScreen))
+        {
+            return true;
+        }
+
+        SDL_Point center =
+        {
+            fireScreen.w / 2,
+            fireScreen.h / 2
+        };
+
+        double angleDeg =
+            static_cast<double>(visualAngle) *
+            RAD_TO_DEG +
+            OFFICER_FIRE_FORWARD_OFFSET_DEG;
+
+        SDL_RenderCopyEx(
+            renderer,
+            textures.officerFire,
+            &textures.officerFireSrc,
+            &fireScreen,
+            angleDeg,
+            &center,
+            SDL_FLIP_NONE);
+
+        return true;
+    }
+
+    if (textures.spritesheetOfficer)
+    {
+        int row =
+            GetSpriteRowFromAngle(visualAngle);
+
+        int frame = 0;
+
+        bool shouldAnimateWalk =
+            (enemy.state == EnemyState::Patrol &&
+            !enemy.patrolPoints.empty()) ||
+            enemy.state == EnemyState::Investigate ||
+            enemy.state == EnemyState::Return;
+
+        if (shouldAnimateWalk)
+        {
+            frame =
+                static_cast<int>(
+                    (SDL_GetTicks() / 160) %
+                    CHARACTER_SHEET_COLS);
+        }
+
+        SDL_Rect source =
+            GetCharacterSheetFrame(
+                textures.spritesheetOfficer,
+                row,
+                frame);
+
+        SDL_Rect spriteWorld =
+            MakeCenteredWorldRectBySize(
+                enemy.rect,
+                OFFICER_SPRITE_RENDER_SIZE,
+                OFFICER_SPRITE_RENDER_SIZE);
+
+        SDL_Rect spriteScreen =
+            camera.WorldToScreenRect(spriteWorld);
+
+        if (!IsScreenRectVisible(spriteScreen))
+        {
+            return true;
+        }
+
+        SDL_RenderCopy(
+            renderer,
+            textures.spritesheetOfficer,
+            &source,
+            &spriteScreen);
+
+        return true;
+    }
+
+    return false;
+}
+
 bool ShouldShowAlarmSirenIndicator(
     bool alarmActive,
     const std::vector<Enemy>& enemies)
@@ -3482,9 +5641,13 @@ void DrawStageText(SDL_Renderer* renderer, TTF_Font* font, int stage)
     {
         text = "TUTORIAL";
     }
+    else if (stage == 2)
+    {
+        text = "MAIN MISSION";
+    }
     else
     {
-        text = "STAGE " + std::to_string(stage - 1);
+        text = "MISSION " + std::to_string(stage - 1);
     }
 
     SDL_Color color = {255,255,255,255};
@@ -3580,10 +5743,19 @@ static bool UpdateTutorialSuppressorAutoPickup(
 // =====================================================
 // MAIN
 // =====================================================
+
 int main(int argc, char* args[])
 {
     SDL_Init(SDL_INIT_VIDEO);
     TTF_Init();
+
+    if ((IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG) != IMG_INIT_PNG)
+    {
+        std::cout
+            << "IMG_Init failed: "
+            << IMG_GetError()
+            << std::endl;
+    }
 
     SDL_Window* window =
         SDL_CreateWindow("Stealth Game",
@@ -3596,11 +5768,16 @@ int main(int argc, char* args[])
     SDL_Renderer* renderer =
         SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
+    SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "1");
+
     TTF_Font* font = TTF_OpenFont("unscii-16.ttf", 48);
 
     if (!font)
     {
         std::cout << "Font load failed\n";
+        IMG_Quit();
+        TTF_Quit();
+        SDL_Quit();
         return 0;
     }
 
@@ -3613,8 +5790,27 @@ int main(int argc, char* args[])
         SDL_DestroyRenderer(renderer);
         SDL_DestroyWindow(window);
         TTF_Quit();
+        IMG_Quit();
         SDL_Quit();
         return 0;
+    }
+
+    InventoryIconTextures inventoryIcons;
+    if (!LoadInventoryIconTextures(renderer, inventoryIcons))
+    {
+        std::cout
+            << "Some inventory icons failed to load. "
+            << "Fallback letters will be used."
+            << std::endl;
+    }
+
+    GameSpriteTextures gameSprites;
+    if (!LoadGameSpriteTextures(renderer, gameSprites))
+    {
+        std::cout
+            << "Some game sprites failed to load. "
+            << "Fallback rectangles will be used."
+            << std::endl;
     }
 
     SDL_Rect player = {100,100,64,64};
@@ -3632,24 +5828,6 @@ int main(int argc, char* args[])
     std::vector<BulletTrail> bulletTrails;
 
     int draggedBodyIndex = -1;
-
-    // base map
-    baseWalls =
-    {
-        {{200,150,20,200}},
-        {{400,100,20,300}},
-        {{100,400,300,20}}
-    };
-
-    // anomaly map (extra)
-    anomalyWalls =
-    {
-        {{500,350,200,20}},
-        {{250,250,20,200}}
-    };
-
-    PrepareSoundWalls(baseWalls);
-    PrepareSoundWalls(anomalyWalls);
     stage = 1;
     displayStage = 1;
     ResetStage(player, enemies);
@@ -3677,6 +5855,10 @@ int main(int argc, char* args[])
 
     bool alarmActive = false;
     int handledBottleSoundEventId = 0;
+
+    bool tutorialToStageJsonTransition = false;
+    bool codebookRequiredMessagePrinted = false;
+    bool finalMissionComplete = false;
 
     Uint64 prev = SDL_GetPerformanceCounter();
     Uint64 freq = SDL_GetPerformanceFrequency();
@@ -3708,6 +5890,15 @@ int main(int argc, char* args[])
 
         bool continueYesPressed = false;
         bool continueNoPressed = false;
+
+        if (e.type == SDL_KEYDOWN && !e.key.repeat)
+        {
+            SDL_Scancode scancode = e.key.keysym.scancode;
+            if (IsPlayerMoveScancode(scancode))
+            {
+                lastPlayerMoveFacingKey = scancode;
+            }
+        }
         
         while (SDL_PollEvent(&e))
         {
@@ -3765,38 +5956,76 @@ int main(int argc, char* args[])
         }
 
         auto walls = GetActiveWalls();
-        auto playerCollisionWalls = walls;
+        auto actorCollisionWalls = GetActorCollisionWalls(walls);
+        auto playerCollisionWalls = actorCollisionWalls;
         tutorial.AppendActivePlayerBlockers(playerCollisionWalls);
 
         if (gameState == CONTINUE_PROMPT)
         {
             if (continueYesPressed)
             {
-                bool restored = RestoreTutorialCheckpoint(
-                    player,
-                    inventory,
-                    equipment,
-                    pistol,
-                    worldItems,
-                    enemies,
-                    lockedDoors,
-                    tutorial,
-                    playerHP,
-                    alarmActive);
-
-                bottleProjectiles.clear();
-                bulletTrails.clear();
-                draggedBodyIndex = -1;
-                soundParticles.clear();
-                
-                if (restored)
+                if (stage == 1)
                 {
-                    gameState = PLAYING;
+                    bool restored =
+                        RestoreTutorialCheckpoint(
+                            player,
+                            inventory,
+                            equipment,
+                            pistol,
+                            worldItems,
+                            enemies,
+                            lockedDoors,
+                            tutorial,
+                            playerHP,
+                            alarmActive);
+                            
+                    bottleProjectiles.clear();
+                    bulletTrails.clear();
+                    draggedBodyIndex = -1;
+                    soundParticles.clear();
+                    
+                    if (restored)
+                    {
+                        gameState = PLAYING;
+                    }
+                    else
+                    {
+                        gameState = LOSE;
+                        stateTimer = SDL_GetTicks();
+                    }
                 }
                 else
                 {
-                    gameState = LOSE;
-                    stateTimer = SDL_GetTicks();
+                    ResetStage(player, enemies);
+                    ResetLockedDoors();
+                    ResetWorldItems(worldItems);
+
+                    inventory = Inventory{};
+                    equipment = Equipment{};
+                    pistol = PlayerGunState{};
+
+                    ResetSuppressorPickup(
+                        suppressorPickup,
+                        equipment);
+
+                    bottleProjectiles.clear();
+                    bulletTrails.clear();
+                    draggedBodyIndex = -1;
+                    soundParticles.clear();
+
+                    soundTimer = 0.0f;
+                    runWallSoundCooldown = 0.0f;
+
+                    playerHP = PLAYER_MAX_HP;
+                    injuredTimer = 0.0f;
+                    alarmActive = false;
+                    handledBottleSoundEventId = 0;
+                    codebookRequiredMessagePrinted = false;
+                    mainStageAnomalyTriggered = false;
+                    mainStageReturnHintVisible = false;
+                    finalMissionComplete = false;
+
+                    gameState = PLAYING;
                 }
             }
             else if (continueNoPressed)
@@ -3868,6 +6097,11 @@ int main(int argc, char* args[])
                 dir.y = dy / len;
             }
 
+            Vec2 visualDir =
+                moving
+                ? MakePlayerVisualMoveDir(key, dir)
+                : dir;
+
             dx = dir.x * speed * dt;
             dy = dir.y * speed * dt;
 
@@ -3875,6 +6109,12 @@ int main(int argc, char* args[])
                 MovePlayerWithCollisionResult(player, dx, dy, playerCollisionWalls);
 
             tutorial.Update(player, mode, moving);
+
+            UpdatePlayerVisualState(
+                mode,
+                moving,
+                visualDir,
+                dt);
 
             if (tutorialAutoMovingToSuppressor)
             {
@@ -3900,7 +6140,7 @@ int main(int argc, char* args[])
 
             if (!tutorialFrozen && !tutorialAutoMovingToSuppressor && bodyDragPressed)
             {
-                bool changed = ToggleBodyDrag(player, enemies, walls, draggedBodyIndex);
+                bool changed = ToggleBodyDrag(player, enemies, actorCollisionWalls, draggedBodyIndex);
                 if (stage == 1)
                 {
                     tutorial.NotifyBodyDragStarted(
@@ -3909,20 +6149,21 @@ int main(int argc, char* args[])
             }
             if (!tutorialFrozen && !tutorialAutoMovingToSuppressor)
             {
-                UpdateDraggedBody(enemies, draggedBodyIndex, player, dir, walls, dt);
+                UpdateDraggedBody(enemies, draggedBodyIndex, player, dir, actorCollisionWalls, dt);
             }
             bool draggingBody = IsDraggingBody(enemies, draggedBodyIndex);
 
-            if (interactPressed &&
-                draggingBody &&
-                stage == 1 &&
-                tutorial.IsBodyHideTrainingActive())
+            if (interactPressed && draggingBody)
             {
                 bool hidden = TryHideDraggedBodyInCabinet(
                     player,
                     enemies,
                     draggedBodyIndex);
-                tutorial.NotifyBodyHidden(hidden);
+                    
+                if (stage == 1 && tutorial.IsBodyHideTrainingActive())
+                {
+                    tutorial.NotifyBodyHidden(hidden);
+                }
             }
 
             //부상 관리
@@ -4044,6 +6285,10 @@ int main(int argc, char* args[])
                                         tutorial.NotifyCodebookPickedUp(true);
                                     }
                                 }
+                                else if (stage != 1 && pickedItem && pickedType == ItemType::Target)
+                                {
+                                    TriggerMainStageAnomaly(enemies);
+                                }
                             }
                         }
                     }
@@ -4066,6 +6311,12 @@ int main(int argc, char* args[])
                         pistol,
                         false,
                         "guard_gun");
+                    if (fired)
+                    {
+                        StartPlayerFireVisual(
+                            player,
+                            pistolTargetWorld);
+                    }
                     
                     const bool killed = fired && IsEnemyDeadBySpawnId(enemies, "guard_gun");
                     if (killed)
@@ -4108,15 +6359,22 @@ int main(int argc, char* args[])
                     const bool pistolAllowed = (stage != 1) || tutorial.IsPistolUnlocked();
                     if (pistolAllowed)
                     {
-                        TryFirePistol(
-                            player,
-                            pistolTargetWorld,
-                            enemies,
-                            walls,
-                            soundParticles,
-                            bulletTrails,
-                            pistol,
-                            equipment.hasSuppressor);
+                        bool fired = 
+                            TryFirePistol(
+                                player,
+                                pistolTargetWorld,
+                                enemies,
+                                walls,
+                                soundParticles,
+                                bulletTrails,
+                                pistol,
+                                equipment.hasSuppressor);
+                        if (fired)
+                        {
+                            StartPlayerFireVisual(
+                                player,
+                                pistolTargetWorld);
+                        }
                     }
                     else
                     {
@@ -4285,6 +6543,7 @@ int main(int argc, char* args[])
                     UpdateEnemies,
                     std::ref(enemies),
                     std::cref(playerSnapshot),
+                    std::cref(actorCollisionWalls),
                     std::cref(walls),
                     alarmActive,
                     std::ref(alarmTriggered),
@@ -4322,13 +6581,14 @@ int main(int argc, char* args[])
             UpdateTutorialEscapeGuardMove(
                 enemies,
                 player,
-                walls,
+                actorCollisionWalls,
                 playerHP,
                 injuredTimer,
                 dt);
 
+            UpdateEnemyVisualTimers(enemies, dt);
             ConsumeEnemyShotTrails(enemies, bulletTrails);
-            ApplyOfficerDeathRewards(enemies, worldItems, pistol.ammo, PISTOL_MAGAZINE_SIZE);
+            ApplyOfficerDeathRewards(player, enemies, worldItems, pistol.ammo, PISTOL_MAGAZINE_SIZE);
             CleanUpParticles(soundParticles, particlesNext);
             
             if (alarmTriggered)
@@ -4393,13 +6653,12 @@ int main(int argc, char* args[])
             // ==============================
             if (playerHP <= 0)
             {
-                if (stage == 1 && tutorialCheckpoint.active)
+                if ((stage == 1 && tutorialCheckpoint.active) || stage != 1)
                 {
                     gameState = CONTINUE_PROMPT;
                 }
                 else
                 {
-                    stage = 1;
                     gameState = LOSE;
                     stateTimer = SDL_GetTicks();
                 }
@@ -4407,84 +6666,96 @@ int main(int argc, char* args[])
             // ==============================
             // GOAL CHECK
             // ==============================
-            bool hitN = SDL_HasIntersection(&player, &goalNormal);
-            bool hitA = SDL_HasIntersection(&player, &goalAnomaly);
-
-            if (hitN || hitA)
+            bool hitGoal = SDL_HasIntersection(&player, &goalNormal) == SDL_TRUE;
+            
+            if (hitGoal)
             {
-                if (stage == 1)
+                if (!inventory.hasTarget)
                 {
-                    if (inventory.hasTarget)
+                    if (!codebookRequiredMessagePrinted)
                     {
-                        // 실제 stage 2가 아직 없으므로 여기서 stage를 올리지 않음
-                        tutorial.NotifyGoalReached();
-                        // stage = 2;
-                        gameState = WIN;
-                        stateTimer = SDL_GetTicks();
-                        std::cout
-                            << "Tutorial complete. Next stage placeholder."
-                            << std::endl;
+                        ShowHudMessage("You need to obtain the codebook first.", 2500);
+                        codebookRequiredMessagePrinted = true;
                     }
-                    // continue;
+                }
+                else if (stage == 1)
+                {
+                    codebookRequiredMessagePrinted = false;
+                    tutorial.NotifyGoalReached();
+                    tutorialToStageJsonTransition = true;
+                    stage = 2;
+                    gameState = WIN;
+                    stateTimer = SDL_GetTicks();
+                    std::cout << "Tutorial complete. Starting stage.json." << std::endl;
                 }
                 else
                 {
-                    bool correct = (!anomalyActive && hitN) || ( anomalyActive && hitA);
-                    std::cout
-                        << "anomalyActive: " << anomalyActive
-                        << " hitN: " << hitN
-                        << " hitA: " << hitA
-                        << std::endl;
-                        
-                    if (correct)
+                    codebookRequiredMessagePrinted = false;
+                    
+                    if (!mainStageAnomalyTriggered)
                     {
-                        stage++;
-                        gameState = WIN;
-                        stateTimer = SDL_GetTicks();
+                        TriggerMainStageAnomaly(enemies);
                     }
                     else
                     {
-                        stage = 1;
-                        gameState = LOSE;
+                        finalMissionComplete = true;
+                        gameState = WIN;
                         stateTimer = SDL_GetTicks();
+                        std::cout << "Mission complete." << std::endl;
                     }
                 }
+            }
+            else
+            {
+                codebookRequiredMessagePrinted = false;
             }
         }
         else if (gameState == WIN || gameState == LOSE)
         {
-            if (gameState == WIN && stage == 1 && tutorial.IsTutorialComplete())
+            if (gameState == WIN && finalMissionComplete)
             {
 
             }
-            // =========================================
-            // 스테이지 리셋
-            // =========================================
             else if (SDL_GetTicks() - stateTimer >= 2000)
             {
                 bool wasLose = (gameState == LOSE);
+                bool wasTutorialToStageJsonTransition = tutorialToStageJsonTransition;
+                
                 ResetStage(player, enemies);
                 ResetLockedDoors();
                 ResetWorldItems(worldItems);
-                if (wasLose)
+                
+                if (wasLose || wasTutorialToStageJsonTransition)
                 {
                     inventory = Inventory{};
                     equipment = Equipment{};
                     pistol = PlayerGunState{};
+                    finalMissionComplete = false;
                 }
                 else
                 {
                     pistol.cooldown = 0.0f;
                 }
+                ResetSuppressorPickup(suppressorPickup, equipment);
+                
                 bottleProjectiles.clear();
                 bulletTrails.clear();
                 draggedBodyIndex = -1;
                 soundParticles.clear();
+                
                 soundTimer = 0.0f;
                 runWallSoundCooldown = 0.0f;
+                
                 playerHP = PLAYER_MAX_HP;
                 alarmActive = false;
                 handledBottleSoundEventId = 0;
+                codebookRequiredMessagePrinted = false;
+                
+                if (wasTutorialToStageJsonTransition)
+                {
+                    ClearTutorialCheckpoint();
+                    tutorialToStageJsonTransition = false;
+                }
                 gameState = PLAYING;
             }
         }
@@ -4495,49 +6766,79 @@ int main(int argc, char* args[])
         SDL_SetRenderDrawColor(renderer, 20,20,20,255);
         SDL_RenderClear(renderer);
 
+        DrawFloor(renderer, gameSprites.floor, camera);
+
         // =============================================
         // FOV
         // =============================================
 
+        static std::vector<Wall> fovWalls;
+        fovWalls.reserve(walls.size());
         for (auto& enemy : enemies)
         {
+            if (enemy.state == EnemyState::Dead)
+            {
+                continue;
+            }
+            SDL_Rect fovWorldBounds = MakeEnemyFOVWorldBounds(enemy);
+            SDL_Rect fovScreenBounds = camera.WorldToScreenRect(fovWorldBounds);
+            if (!IsScreenRectVisible(fovScreenBounds))
+            {
+                continue;
+            }
+
+            CollectWallsForFOV(
+                walls,
+                fovWorldBounds,
+                fovWalls);
+
             DrawFOV(
                 renderer,
                 enemy,
-                walls,
+                fovWalls,
                 camera);
         }
 
         // walls
-        SDL_SetRenderDrawColor(renderer, 120,120,120,255);
+        SDL_SetRenderDrawColor(renderer, 58, 58, 58, 255);
 
         for (auto& w : walls)
         {
             SDL_Rect r = camera.WorldToScreenRect(w.rect);
+            if (!IsScreenRectVisible(r))
+            {
+                continue;
+            }
+
             SDL_RenderFillRect(renderer, &r);
         }
 
+        DrawUnopenableDoors(renderer, camera);
         DrawLockedDoors(renderer, uiFont, lockedDoors, camera);
-        DrawCabinets(renderer, uiFont, camera);
+        DrawCabinetSprites(renderer, camera, gameSprites);
+        DrawEtcSprites(renderer, camera, gameSprites);
 
-        // goals
-        SDL_SetRenderDrawColor(renderer, 0,255,0,255);
-        SDL_Rect gn = camera.WorldToScreenRect(goalNormal);
-        SDL_RenderDrawRect(renderer, &gn);
-
-        SDL_SetRenderDrawColor(renderer, 255,0,0,255);
-        SDL_Rect ga = camera.WorldToScreenRect(goalAnomaly);
-        SDL_RenderDrawRect(renderer, &ga);
-
-        DrawWorldItems(renderer, uiFont, worldItems, camera);
+        DrawWorldItemSprites(renderer, uiFont, worldItems, camera, gameSprites);
         DrawSuppressorPickup(renderer, suppressorPickup, equipment, camera);
         DrawBottleProjectiles(renderer, bottleProjectiles, camera);
         DrawTutorialBottleThrowZone(renderer, camera);
 
         // player
-        SDL_SetRenderDrawColor(renderer, 0,255,0,255);
-        SDL_Rect ps = camera.WorldToScreenRect(player);
-        SDL_RenderFillRect(renderer, &ps);
+        if (!TryDrawPlayerTexture(
+            renderer,
+            player,
+            camera,
+            gameSprites,
+            playerHP,
+            gameState))
+        {
+            SDL_Rect playerScreen = camera.WorldToScreenRect(player);
+            if (IsScreenRectVisible(playerScreen))
+            {
+                SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
+                SDL_RenderFillRect(renderer, &playerScreen);
+            }
+        }
 
         // =============================================
         // 적
@@ -4545,6 +6846,28 @@ int main(int argc, char* args[])
 
         for (auto& enemy : enemies)
         {
+            if (TryDrawCorpseTexture(renderer, enemy, camera, gameSprites))
+            {
+                continue;
+            }
+
+            if (TryDrawOfficerTexture(renderer, enemy, camera, gameSprites))
+            {
+                continue;
+            }
+
+            if (TryDrawEnemyTexture(renderer, enemy, camera, gameSprites))
+            {
+                continue;
+            }
+
+            SDL_Rect enemyScreen = camera.WorldToScreenRect(enemy.rect);
+
+            if (!IsScreenRectVisible(enemyScreen))
+            {
+                continue;
+            }
+
             if (enemy.state == EnemyState::Dead)
             {
                 if (enemy.bodyDragged)
@@ -4611,7 +6934,6 @@ int main(int argc, char* args[])
                     0,
                     255);
             }
-            SDL_Rect enemyScreen = camera.WorldToScreenRect(enemy.rect);
             SDL_RenderFillRect(renderer, &enemyScreen);
         }
 
@@ -4647,7 +6969,14 @@ int main(int argc, char* args[])
             {
                 continue;
             }
+
             SDL_Rect enemyScreen = camera.WorldToScreenRect(enemy.rect);
+
+            if (!IsScreenRectVisible(enemyScreen))
+            {
+                continue;
+            }
+
             float enemyHpRatio =
                 (enemy.maxHP > 0)
                 ? static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHP)
@@ -4670,10 +6999,29 @@ int main(int argc, char* args[])
             PLAYER_HEALTH_BAR_HEIGHT,
             static_cast<float>(playerHP) / static_cast<float>(PLAYER_MAX_HP));
 
-        DrawInventoryHUD(renderer, uiFont, inventory);
+        DrawInventoryHUD(renderer, uiFont, inventory, inventoryIcons);
         if (stage != 1 || tutorial.IsPistolUnlocked())
         {
             DrawGunHUD(renderer, uiFont, pistol, equipment.hasSuppressor);
+        }
+        DrawHudMessage(renderer, uiFont);
+        if (mainStageReturnHintVisible)
+        {
+            Uint32 elapsed = SDL_GetTicks() - mainStageReturnHintStart;
+            if (elapsed <= MAIN_STAGE_RETURN_HINT_DURATION_MS)
+            {
+                SDL_Rect hintRect = { SCREEN_WIDTH / 2 - 260, 72, 520, 36 };
+                DrawTextInRect(
+                    renderer,
+                    uiFont,
+                    "Codebook acquired. Return to start!",
+                    hintRect,
+                    { 255, 255, 255, 255 });
+            }
+            else
+            {
+                mainStageReturnHintVisible = false;
+            }
         }
         tutorial.DrawUI(renderer, uiFont);
 
@@ -4695,7 +7043,11 @@ int main(int argc, char* args[])
 
         if (gameState == WIN)
         {
-            if (stage == 1 && tutorial.IsTutorialComplete())
+            if (finalMissionComplete)
+            {
+                DrawCenteredText(renderer, font, "MISSION COMPLETE");
+            }
+            else if (tutorialToStageJsonTransition || tutorial.IsTutorialComplete())
             {
                 DrawCenteredText(renderer, font, "TUTORIAL COMPLETE");
             }
@@ -4718,6 +7070,8 @@ int main(int argc, char* args[])
     }
 
     // cleanup
+    DestroyGameSpriteTextures(gameSprites);
+    DestroyInventoryIconTextures(inventoryIcons);
     TTF_CloseFont(uiFont);
     TTF_CloseFont(font);
     SDL_DestroyRenderer(renderer);
