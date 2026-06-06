@@ -15,6 +15,7 @@ struct StageEnemySpawnDef
 
     bool scripted = false;
     bool tutorialPassive = false;
+    bool dropKey = false;
 };
 
 struct StageItemSpawnDef
@@ -28,6 +29,14 @@ struct StageInteractableDef
 {
     std::string id;
     SDL_Rect rect = { 0, 0, 1, 1 };
+};
+
+struct StageEtcDef
+{
+    SDL_Rect rect = { 0, 0, 0, 0 };
+    std::string name;
+    std::string type;
+    std::string dir;
 };
 
 struct StageTutorialTriggerDef
@@ -65,12 +74,15 @@ struct StageMapSetup
 
     std::vector<Wall> baseWalls;
     std::vector<Wall> anomalyWalls;
+    std::vector<Wall> etcCollisionWalls;
 
     std::vector<StageEnemySpawnDef> enemySpawns;
     std::vector<StageItemSpawnDef> itemSpawns;
     std::vector<StageInteractableDef> interactables;
     std::vector<StageTutorialTriggerDef> tutorialTriggers;
     std::vector<StageTutorialBlockerDef> tutorialBlockers;
+
+    std::vector<StageEtcDef> etcs;
 
     SDL_Rect goalNormal = { 700, 500, 40, 40 };
     SDL_Rect goalAnomaly = { 700, 100, 40, 40 };
@@ -81,6 +93,6 @@ struct StageMapSetup
 
 StageMapSetup LoadStageMapFromJson(const char* path);
 
-StageMapSetup MakeTutorialMovementStageMap();
+StageMapSetup MakeTutorialStageMap();
 
 StageMapSetup MakePrototypeMainStageMap();

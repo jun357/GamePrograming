@@ -1,5 +1,5 @@
 { "compressionlevel":-1,
- "height":2400,
+ "height":250,
  "infinite":false,
  "layers":[
         {
@@ -26,8 +26,8 @@
                  "rotation":0,
                  "type":"wall",
                  "visible":true,
-                 "width":4768,
-                 "x":1392,
+                 "width":3840,
+                 "x":800,
                  "y":80
                 }, 
                 {
@@ -50,7 +50,7 @@
                  "type":"wall",
                  "visible":true,
                  "width":40,
-                 "x":1392,
+                 "x":800,
                  "y":80
                 }, 
                 {
@@ -72,8 +72,8 @@
                  "rotation":0,
                  "type":"wall",
                  "visible":true,
-                 "width":856,
-                 "x":1392,
+                 "width":1448,
+                 "x":800,
                  "y":440
                 }, 
                 {
@@ -302,7 +302,7 @@
                  "rotation":0,
                  "type":"wall",
                  "visible":true,
-                 "width":2112,
+                 "width":1472,
                  "x":3888,
                  "y":1080
                 }, 
@@ -353,30 +353,7 @@
                  "y":680
                 }, 
                 {
-                 "height":40,
-                 "id":84,
-                 "name":"",
-                 "opacity":1,
-                 "properties":[
-                        {
-                         "name":"group",
-                         "type":"string",
-                         "value":"base"
-                        }, 
-                        {
-                         "name":"soundBlock",
-                         "type":"string",
-                         "value":"true"
-                        }],
-                 "rotation":0,
-                 "type":"wall",
-                 "visible":true,
-                 "width":960,
-                 "x":5440,
-                 "y":960
-                }, 
-                {
-                 "height":280,
+                 "height":1080,
                  "id":85,
                  "name":"",
                  "opacity":1,
@@ -468,7 +445,7 @@
                  "y":440
                 }, 
                 {
-                 "height":160,
+                 "height":264,
                  "id":99,
                  "name":"",
                  "opacity":1,
@@ -488,7 +465,7 @@
                  "visible":true,
                  "width":40,
                  "x":5440,
-                 "y":440
+                 "y":336
                 }, 
                 {
                  "height":40,
@@ -509,12 +486,12 @@
                  "rotation":0,
                  "type":"wall",
                  "visible":true,
-                 "width":400,
+                 "width":480,
                  "x":5440,
                  "y":680
                 }, 
                 {
-                 "height":280,
+                 "height":384,
                  "id":101,
                  "name":"",
                  "opacity":1,
@@ -533,8 +510,8 @@
                  "type":"",
                  "visible":true,
                  "width":40,
-                 "x":5800,
-                 "y":440
+                 "x":5920,
+                 "y":336
                 }, 
                 {
                  "height":40,
@@ -555,9 +532,9 @@
                  "rotation":0,
                  "type":"wall",
                  "visible":true,
-                 "width":720,
+                 "width":960,
                  "x":5440,
-                 "y":440
+                 "y":336
                 }, 
                 {
                  "height":176,
@@ -604,6 +581,75 @@
                  "width":368,
                  "x":3400,
                  "y":1480
+                }, 
+                {
+                 "height":120,
+                 "id":136,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"group",
+                         "type":"string",
+                         "value":"base"
+                        }, 
+                        {
+                         "name":"soundBlock",
+                         "type":"string",
+                         "value":"true"
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":40,
+                 "x":4600,
+                 "y":0
+                }, 
+                {
+                 "height":40,
+                 "id":138,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"group",
+                         "type":"string",
+                         "value":"base"
+                        }, 
+                        {
+                         "name":"soundBlock",
+                         "type":"string",
+                         "value":"true"
+                        }],
+                 "rotation":0,
+                 "type":"wall",
+                 "visible":true,
+                 "width":1800,
+                 "x":4600,
+                 "y":0
+                }, 
+                {
+                 "height":680,
+                 "id":139,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"group",
+                         "type":"string",
+                         "value":"base"
+                        }, 
+                        {
+                         "name":"soundBlock",
+                         "type":"string",
+                         "value":"true"
+                        }],
+                 "rotation":0,
+                 "type":"",
+                 "visible":true,
+                 "width":40,
+                 "x":5320,
+                 "y":1080
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -738,7 +784,7 @@
                  "visible":true,
                  "width":16,
                  "x":5496,
-                 "y":496
+                 "y":416
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -760,7 +806,7 @@
                  "type":"player_spawn",
                  "visible":true,
                  "width":32,
-                 "x":1504,
+                 "x":864,
                  "y":264
                 }],
          "opacity":1,
@@ -775,7 +821,7 @@
          "name":"Goals",
          "objects":[
                 {
-                 "height":320,
+                 "height":296,
                  "id":119,
                  "name":"",
                  "opacity":1,
@@ -783,8 +829,8 @@
                  "type":"",
                  "visible":true,
                  "width":32,
-                 "x":6128,
-                 "y":120
+                 "x":6368,
+                 "y":40
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -798,7 +844,7 @@
          "name":"TutorialTriggers",
          "objects":[
                 {
-                 "height":424,
+                 "height":416,
                  "id":30,
                  "name":"t01_movement_start",
                  "opacity":1,
@@ -846,8 +892,8 @@
                  "rotation":0,
                  "type":"tutorial_trigger",
                  "visible":true,
-                 "width":720,
-                 "x":1432,
+                 "width":1360,
+                 "x":792,
                  "y":72
                 }, 
                 {
@@ -960,8 +1006,8 @@
                  "rotation":0,
                  "type":"tutorial_trigger",
                  "visible":true,
-                 "width":120,
-                 "x":3808,
+                 "width":88,
+                 "x":3840,
                  "y":1376
                 }, 
                 {
@@ -1077,6 +1123,44 @@
                  "width":832,
                  "x":4608,
                  "y":960
+                }, 
+                {
+                 "height":40,
+                 "id":131,
+                 "name":"t09_escape_intro",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"displayMode",
+                         "type":"string",
+                         "value":"untilNext"
+                        }, 
+                        {
+                         "name":"once",
+                         "type":"bool",
+                         "value":true
+                        }, 
+                        {
+                         "name":"pause",
+                         "type":"bool",
+                         "value":false
+                        }, 
+                        {
+                         "name":"phase",
+                         "type":"string",
+                         "value":"escape_intro"
+                        }, 
+                        {
+                         "name":"textId",
+                         "type":"string",
+                         "value":""
+                        }],
+                 "rotation":0,
+                 "type":"tutorial_trigger",
+                 "visible":true,
+                 "width":112,
+                 "x":5328,
+                 "y":400
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -1276,44 +1360,6 @@
                 }, 
                 {
                  "height":96,
-                 "id":87,
-                 "name":"",
-                 "opacity":1,
-                 "properties":[
-                        {
-                         "name":"blocks",
-                         "type":"string",
-                         "value":"player"
-                        }, 
-                        {
-                         "name":"id",
-                         "type":"string",
-                         "value":""
-                        }, 
-                        {
-                         "name":"initialActive",
-                         "type":"bool",
-                         "value":true
-                        }, 
-                        {
-                         "name":"unlockWhen",
-                         "type":"string",
-                         "value":""
-                        }, 
-                        {
-                         "name":"visible",
-                         "type":"bool",
-                         "value":false
-                        }],
-                 "rotation":0,
-                 "type":"tutorial_blocker",
-                 "visible":true,
-                 "width":32,
-                 "x":5440,
-                 "y":992
-                }, 
-                {
-                 "height":96,
                  "id":105,
                  "name":"",
                  "opacity":1,
@@ -1351,7 +1397,7 @@
                  "y":992
                 }, 
                 {
-                 "height":336,
+                 "height":408,
                  "id":106,
                  "name":"",
                  "opacity":1,
@@ -1386,7 +1432,7 @@
                  "visible":true,
                  "width":32,
                  "x":5328,
-                 "y":112
+                 "y":40
                 }, 
                 {
                  "height":176,
@@ -1427,7 +1473,7 @@
                  "y":1344
                 }, 
                 {
-                 "height":32,
+                 "height":8,
                  "id":123,
                  "name":"",
                  "opacity":1,
@@ -1460,9 +1506,156 @@
                  "rotation":0,
                  "type":"tutorial_blocker",
                  "visible":true,
-                 "width":200,
-                 "x":5296,
-                 "y":448
+                 "width":96,
+                 "x":5352,
+                 "y":472
+                }, 
+                {
+                 "height":80,
+                 "id":132,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"blocks",
+                         "type":"string",
+                         "value":"player"
+                        }, 
+                        {
+                         "name":"id",
+                         "type":"string",
+                         "value":"block_key"
+                        }, 
+                        {
+                         "name":"initialActive",
+                         "type":"bool",
+                         "value":true
+                        }, 
+                        {
+                         "name":"unlockWhen",
+                         "type":"string",
+                         "value":""
+                        }, 
+                        {
+                         "name":"visible",
+                         "type":"bool",
+                         "value":false
+                        }],
+                 "rotation":0,
+                 "type":"tutorial_blocker",
+                 "visible":true,
+                 "width":48,
+                 "x":5120,
+                 "y":520
+                }, 
+                {
+                 "height":80,
+                 "id":133,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"blocks",
+                         "type":"string",
+                         "value":"player"
+                        }, 
+                        {
+                         "name":"id",
+                         "type":"string",
+                         "value":"block_key"
+                        }, 
+                        {
+                         "name":"initialActive",
+                         "type":"bool",
+                         "value":true
+                        }, 
+                        {
+                         "name":"unlockWhen",
+                         "type":"string",
+                         "value":""
+                        }, 
+                        {
+                         "name":"visible",
+                         "type":"bool",
+                         "value":false
+                        }],
+                 "rotation":0,
+                 "type":"tutorial_blocker",
+                 "visible":true,
+                 "width":48,
+                 "x":5160,
+                 "y":480
+                }, 
+                {
+                 "height":96,
+                 "id":134,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"blocks",
+                         "type":"string",
+                         "value":"player"
+                        }, 
+                        {
+                         "name":"id",
+                         "type":"string",
+                         "value":"block_cabinet"
+                        }, 
+                        {
+                         "name":"initialActive",
+                         "type":"bool",
+                         "value":true
+                        }, 
+                        {
+                         "name":"unlockWhen",
+                         "type":"string",
+                         "value":""
+                        }, 
+                        {
+                         "name":"visible",
+                         "type":"bool",
+                         "value":false
+                        }],
+                 "rotation":0,
+                 "type":"tutorial_blocker",
+                 "visible":true,
+                 "width":8,
+                 "x":5320,
+                 "y":592
+                }, 
+                {
+                 "height":88,
+                 "id":140,
+                 "name":"",
+                 "opacity":1,
+                 "properties":[
+                        {
+                         "name":"blocks",
+                         "type":"string",
+                         "value":"player"
+                        }, 
+                        {
+                         "name":"id",
+                         "type":"string",
+                         "value":"block_movement_exit_02"
+                        }, 
+                        {
+                         "name":"initialActive",
+                         "type":"bool",
+                         "value":true
+                        }, 
+                        {
+                         "name":"visible",
+                         "type":"bool",
+                         "value":false
+                        }],
+                 "rotation":0,
+                 "type":"tutorial_blocker",
+                 "visible":true,
+                 "width":160,
+                 "x":5320,
+                 "y":1080
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -1738,7 +1931,7 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5704,
+                 "x":5872,
                  "y":624
                 }, 
                 {
@@ -1776,8 +1969,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5184,
-                 "y":144
+                 "x":5152,
+                 "y":48
                 }, 
                 {
                  "height":32,
@@ -1814,8 +2007,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5184,
-                 "y":192
+                 "x":5192,
+                 "y":48
                 }, 
                 {
                  "height":32,
@@ -1852,8 +2045,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5184,
-                 "y":240
+                 "x":4992,
+                 "y":48
                 }, 
                 {
                  "height":32,
@@ -1890,8 +2083,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5120,
-                 "y":144
+                 "x":5112,
+                 "y":48
                 }, 
                 {
                  "height":32,
@@ -1928,8 +2121,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5120,
-                 "y":192
+                 "x":5112,
+                 "y":88
                 }, 
                 {
                  "height":32,
@@ -1966,8 +2159,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5120,
-                 "y":240
+                 "x":4992,
+                 "y":88
                 }, 
                 {
                  "height":32,
@@ -2004,8 +2197,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5056,
-                 "y":144
+                 "x":5072,
+                 "y":48
                 }, 
                 {
                  "height":32,
@@ -2042,8 +2235,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5056,
-                 "y":192
+                 "x":5072,
+                 "y":88
                 }, 
                 {
                  "height":32,
@@ -2080,8 +2273,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":5056,
-                 "y":240
+                 "x":5032,
+                 "y":128
                 }, 
                 {
                  "height":32,
@@ -2118,8 +2311,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":4992,
-                 "y":144
+                 "x":5032,
+                 "y":48
                 }, 
                 {
                  "height":32,
@@ -2156,8 +2349,8 @@
                  "type":"enemy",
                  "visible":true,
                  "width":32,
-                 "x":4992,
-                 "y":192
+                 "x":5032,
+                 "y":88
                 }, 
                 {
                  "height":32,
@@ -2195,7 +2388,7 @@
                  "visible":true,
                  "width":32,
                  "x":4992,
-                 "y":240
+                 "y":128
                 }, 
                 {
                  "height":32,
@@ -2242,7 +2435,7 @@
          "y":0
         }],
  "nextlayerid":12,
- "nextobjectid":131,
+ "nextobjectid":141,
  "orientation":"orthogonal",
  "renderorder":"right-down",
  "tiledversion":"1.12.2",
@@ -2251,5 +2444,5 @@
  "tilewidth":8,
  "type":"map",
  "version":"1.10",
- "width":4000
+ "width":800
 }

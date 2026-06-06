@@ -112,6 +112,7 @@ struct Enemy
     // 아이템 드롭
     // =====================================================
     bool officerRewardGiven = false;
+    bool dropKeyOnDeath = false;
 
     // =====================================================
     // 공격 정보
@@ -124,6 +125,7 @@ struct Enemy
     bool shotTrailPending = false;
     Vec2 shotTrailStart = { 0.0f, 0.0f };
     Vec2 shotTrailEnd = { 0.0f, 0.0f };
+    float fireVisualTimer = 0.0f;
 
     // =====================================================
     // 시체 처리
@@ -145,7 +147,8 @@ struct Enemy
 void UpdateEnemies(
     std::vector<Enemy>& enemies,
     const SDL_Rect& player,
-    const std::vector<Wall>& walls,
+    const std::vector<Wall>& movementWalls,
+    const std::vector<Wall>& sightWalls,
     bool alarmActive,
     bool& alarmTriggered,
     int& playerHP,

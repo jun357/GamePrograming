@@ -82,6 +82,7 @@ namespace
         enemy.shotTrailPending = false;
         enemy.shotTrailStart = { 0.0f, 0.0f };
         enemy.shotTrailEnd = { 0.0f, 0.0f };
+        enemy.fireVisualTimer = 0.0f;
         enemy.bodyDraggable = false;
         enemy.bodyDragged = false;
         enemy.bodyHidden = false;
@@ -156,7 +157,7 @@ namespace
         enemy.attackCooldown = 0.0f;
         enemy.attackInterval = 0.7f;
         enemy.firstShotDelay = 0.25f;
-        enemy.attackRange = 200.0f;
+        enemy.attackRange = 240.0f;
         enemy.attackDamage = 10;
     }
 }
@@ -1099,57 +1100,78 @@ static bool MoveEnemyToward(
 // 시야 판정
 // =====================================================
 
-static bool CanSeePlayer(
+static bool CanSeePoint(
     const Enemy& enemy,
-    const SDL_Rect& player,
+    Vec2 targetCenter,
     const std::vector<Wall>& walls)
 {
-    Vec2 playerCenter = GetPlayerCenter(player);
-    Vec2 toPlayer =
+    Vec2 toTarget = targetCenter - enemy.pos;
+
+    const float distSq = LengthSq(toTarget);
+    const float viewDistSq = enemy.viewDist * enemy.viewDist;
+
+    if (distSq >= viewDistSq)
     {
-        playerCenter.x - enemy.pos.x,
-        playerCenter.y - enemy.pos.y
-    };
-
-    float distSq = toPlayer.x * toPlayer.x + toPlayer.y * toPlayer.y;
-
-    if (distSq >= enemy.viewDist * enemy.viewDist)
         return false;
+    }
 
     if (distSq < 0.0001f)
+    {
         return false;
+    }
 
-    float dist = sqrtf(distSq);
-    Vec2 toPlayerNorm =
-    {
-        toPlayer.x / dist,
-        toPlayer.y / dist
-    };
-    Vec2 enemyDir =
-    {
-        cosf(enemy.angle),
-        sinf(enemy.angle)
-    };
+    const float dist = sqrtf(distSq);
+    Vec2 toTargetNorm = {toTarget.x / dist, toTarget.y / dist};
+    Vec2 enemyDir = {cosf(enemy.angle), sinf(enemy.angle)};
 
-    float dot = Dot(enemyDir, toPlayerNorm);
-    float fovLimit = cosf(enemy.fov * 0.5f);
+    const float dot = Dot(enemyDir, toTargetNorm);
+    const float fovLimit = cosf(enemy.fov * 0.5f);
 
     if (dot <= fovLimit)
+    {
         return false;
+    }
 
     for (const auto& wall : walls)
     {
         if (LineIntersectsRect(
             enemy.pos.x,
             enemy.pos.y,
-            playerCenter.x,
-            playerCenter.y,
+            targetCenter.x,
+            targetCenter.y,
             wall.rect))
         {
             return false;
         }
     }
+
     return true;
+}
+
+static bool CanSeePlayer(
+    const Enemy& enemy,
+    const SDL_Rect& player,
+    const std::vector<Wall>& walls)
+{
+    return CanSeePoint(enemy, GetPlayerCenter(player), walls);
+}
+
+static bool CanSeeCorpse(
+    const Enemy& observer,
+    const Enemy& corpse,
+    const std::vector<Wall>& walls)
+{
+    if (corpse.state != EnemyState::Dead)
+    {
+        return false;
+    }
+
+    if (corpse.bodyHidden)
+    {
+        return false;
+    }
+
+    return CanSeePoint(observer, GetRectCenter(corpse.rect), walls);
 }
 
 static float DistanceSqToPlayer(
@@ -1190,6 +1212,56 @@ static float GetInitialAttackDelay(
     }
 
     return enemy.firstShotDelay;
+}
+
+static const Enemy* FindVisibleCorpse(
+    const Enemy& observer,
+    const std::vector<Enemy>& enemies,
+    const std::vector<Wall>& walls)
+{
+    for (const auto& corpse : enemies)
+    {
+        if (&corpse == &observer) {
+            continue;
+        }
+
+        if (!CanSeeCorpse(observer, corpse, walls))
+        {
+            continue;
+        }
+
+        return &corpse;
+    }
+
+    return nullptr;
+}
+
+static void TriggerCorpseFoundAlert(
+    Enemy& observer,
+    const Enemy& corpse,
+    bool alarmActive)
+{
+    const Vec2 corpseCenter = GetRectCenter(corpse.rect);
+
+    if (observer.state != EnemyState::Alert)
+    {
+        ChangeEnemyState(observer, EnemyState::Alert);
+        observer.attackCooldown = GetInitialAttackDelay(observer, alarmActive);
+    }
+
+    observer.heightenedAlert = true;
+    observer.alerted = true;
+
+    observer.lastKnownPlayerPos = corpseCenter;
+    observer.lastNoisePos = corpseCenter;
+
+    observer.hasPendingNoise = false;
+    observer.pendingNoiseEnergy = 0.0f;
+    observer.hearingEnergy = 0.0f;
+
+    observer.alertLostTimer = 0.0f;
+    observer.alertSearchBaseAngle =
+        GetAngleToPoint(observer.pos, corpseCenter, observer.angle);
 }
 
 static void QueueEnemyShotTrail(
@@ -1299,27 +1371,48 @@ static void UpdatePatrol(Enemy& enemy, const std::vector<Wall>& walls, float dt)
 
     if (enemy.kind == EnemyKind::PatrolGuard)
     {
-        if (enemy.patrolPoints.empty())
+        static constexpr float TURN_AROUND_ANGLE = 3.14159265359f;
+        if (enemy.moveSpeed <= 0.0f)
         {
             return;
         }
-
-        if (enemy.patrolIndex < 0 ||
-            enemy.patrolIndex >= static_cast<int>(enemy.patrolPoints.size()))
+        Vec2 forward =
         {
-            enemy.patrolIndex = 0;
-        }
-
-        Vec2 target = enemy.patrolPoints[enemy.patrolIndex];
-        bool arrived = MoveEnemyToward(enemy, target, walls, dt, true);
-
-        if (arrived)
+            std::cos(enemy.angle),
+            std::sin(enemy.angle)
+        };
+        
+        if (LengthSq(forward) <= 0.000001f)
         {
-            enemy.patrolIndex =
-                (enemy.patrolIndex + 1) %
-                static_cast<int>(enemy.patrolPoints.size());
+            forward =
+            {
+                1.0f, 0.0f
+            };
         }
-
+        
+        forward = Normalize(forward);
+        Vec2 nextCenter = enemy.pos + forward * enemy.moveSpeed * dt;
+        if (CanEnemyOccupyCenter(enemy, nextCenter, walls))
+        {
+            SetEnemyCenter(enemy, nextCenter);
+            enemy.homeAngle = enemy.angle;
+            enemy.stuckTimer = 0.0f;
+        }
+        else
+        {
+            enemy.angle = WrapAngle(enemy.angle + TURN_AROUND_ANGLE);
+            enemy.homeAngle = enemy.angle;
+            
+            Vec2 reversedForward = forward * -1.0f;
+            Vec2 reversedCenter = enemy.pos + reversedForward * enemy.moveSpeed * dt;
+            
+            if (CanEnemyOccupyCenter(enemy, reversedCenter, walls))
+            {
+                SetEnemyCenter(enemy, reversedCenter);
+            }
+            
+            enemy.stuckTimer = 0.0f;
+        }
         return;
     }
 
@@ -1538,15 +1631,19 @@ static void UpdateReturn(
         enemy.stuckTimer = 0.0f;
     }
 }
+
 static void UpdateAlert(
     Enemy& enemy,
     const SDL_Rect& player,
-    const std::vector<Wall>& walls,
+    const std::vector<Wall>& movementWalls,
+    const std::vector<Wall>& sightWalls,
     bool alarmActive,
     int& playerHP,
     float& injuredTimer,
     float dt)
 {
+    (void)alarmActive;
+
     const float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
     const float ARRIVE_DISTANCE = 3.0f;
 
@@ -1555,8 +1652,11 @@ static void UpdateAlert(
         enemy.attackCooldown -= dt;
     }
 
-    bool canSee = CanSeePlayer(enemy, player, walls);
-    Vec2 playerCenter = GetPlayerCenter(player);
+    Vec2 playerCenter =
+        GetPlayerCenter(player);
+
+    bool canSee =
+        CanSeePlayer(enemy, player, sightWalls);
 
     if (canSee)
     {
@@ -1564,12 +1664,56 @@ static void UpdateAlert(
         enemy.lastKnownPlayerPos = playerCenter;
         enemy.alertSearchBaseAngle = enemy.angle;
 
-        FacePointSmooth(enemy, playerCenter, ENEMY_ALERT_AIM_TURN_SPEED, dt);
+        FacePointSmooth(
+            enemy,
+            playerCenter,
+            ENEMY_ALERT_AIM_TURN_SPEED,
+            dt);
 
-        if (IsPlayerInAttackRange(enemy, player) &&
-            enemy.attackCooldown <= 0.0f)
+        if (!IsPlayerInAttackRange(enemy, player))
         {
-            ApplyEnemyGunHit(enemy, playerCenter, playerHP, injuredTimer);
+            Vec2 toPlayer =
+                playerCenter - enemy.pos;
+
+            float distSq =
+                LengthSq(toPlayer);
+
+            if (distSq > 0.000001f)
+            {
+                float dist =
+                    std::sqrt(distSq);
+
+                Vec2 dir =
+                {
+                    toPlayer.x / dist,
+                    toPlayer.y / dist
+                };
+
+                float desiredDistance =
+                    enemy.attackRange * 0.75f;
+
+                Vec2 chaseTarget =
+                    playerCenter - dir * desiredDistance;
+
+                MoveEnemyToward(
+                    enemy,
+                    chaseTarget,
+                    movementWalls,
+                    dt,
+                    true,
+                    ENEMY_ALERT_AIM_TURN_SPEED);
+            }
+
+            return;
+        }
+
+        if (enemy.attackCooldown <= 0.0f)
+        {
+            ApplyEnemyGunHit(
+                enemy,
+                playerCenter,
+                playerHP,
+                injuredTimer);
         }
 
         return;
@@ -1584,7 +1728,7 @@ static void UpdateAlert(
             MoveEnemyToward(
                 enemy,
                 enemy.lastKnownPlayerPos,
-                walls,
+                movementWalls,
                 dt,
                 true,
                 ENEMY_ALERT_AIM_TURN_SPEED);
@@ -1604,9 +1748,19 @@ static void UpdateAlert(
     // 마지막 목격 지점에서 강한 수색
     const float sweepRange = 80.0f * DEG_TO_RAD;
     const float sweepSpeed = 1.2f;
-    float sweep = sinf(enemy.alertLostTimer * sweepSpeed) * sweepRange;
-    float desiredAngle = WrapAngle(enemy.alertSearchBaseAngle + sweep);
-    RotateTowardAngle(enemy, desiredAngle, ENEMY_ALERT_SEARCH_TURN_SPEED, dt);
+
+    float sweep =
+        sinf(enemy.alertLostTimer * sweepSpeed) *
+        sweepRange;
+
+    float desiredAngle =
+        WrapAngle(enemy.alertSearchBaseAngle + sweep);
+
+    RotateTowardAngle(
+        enemy,
+        desiredAngle,
+        ENEMY_ALERT_SEARCH_TURN_SPEED,
+        dt);
 
     if (enemy.alertLostTimer >= enemy.alertSearchDuration)
     {
@@ -1621,13 +1775,23 @@ static void UpdateAlert(
 void UpdateEnemies(
     std::vector<Enemy>& enemies,
     const SDL_Rect& player,
-    const std::vector<Wall>& walls,
+    const std::vector<Wall>& movementWalls,
+    const std::vector<Wall>& sightWalls,
     bool alarmActive,
     bool& alarmTriggered,
     int& playerHP,
     float& injuredTimer,
     float dt)
 {
+    bool hasUnhiddenCorpse = false;
+    for (const auto& candidate : enemies)
+    {
+        if (candidate.state == EnemyState::Dead && !candidate.bodyHidden)
+        {
+            hasUnhiddenCorpse = true;
+            break;
+        }
+    }
     for (auto& enemy : enemies)
     {
         EnsureEnemyInitialized(enemy);
@@ -1647,7 +1811,7 @@ void UpdateEnemies(
 
         enemy.hearingEnergy *= expf(-2.0f * dt);
 
-        bool canSeePlayerNow = CanSeePlayer(enemy, player, walls);
+        bool canSeePlayerNow = CanSeePlayer(enemy, player, sightWalls);
 
         if (canSeePlayerNow)
         {
@@ -1656,24 +1820,44 @@ void UpdateEnemies(
             if (enemy.state != EnemyState::Alert)
             {
                 ChangeEnemyState(enemy, EnemyState::Alert);
-                enemy.attackCooldown = GetInitialAttackDelay(enemy, alarmActive);
+                enemy.attackCooldown =
+                    GetInitialAttackDelay(enemy, alarmActive || alarmTriggered);
             }
 
             alarmTriggered = true;
         }
         else
         {
-            ConsumePendingNoise(enemy, alarmActive);
+            const Enemy* visibleCorpse = nullptr;
+
+            if (hasUnhiddenCorpse && enemy.state != EnemyState::Alert)
+            {
+                visibleCorpse = FindVisibleCorpse(enemy, enemies, sightWalls);
+            }
+
+            if (visibleCorpse)
+            {
+                TriggerCorpseFoundAlert(
+                    enemy,
+                    *visibleCorpse,
+                    alarmActive || alarmTriggered);
+
+                alarmTriggered = true;
+            }
+            else
+            {
+                ConsumePendingNoise(enemy, alarmActive);
+            }
         }
 
         switch (enemy.state)
         {
         case EnemyState::Patrol:
-            UpdatePatrol(enemy, walls, dt);
+            UpdatePatrol(enemy, movementWalls, dt);
             break;
 
         case EnemyState::Investigate:
-            UpdateInvestigate(enemy, walls, dt);
+            UpdateInvestigate(enemy, movementWalls, dt);
             break;
 
         case EnemyState::Search:
@@ -1681,11 +1865,11 @@ void UpdateEnemies(
             break;
 
         case EnemyState::Return:
-            UpdateReturn(enemy, walls, dt);
+            UpdateReturn(enemy, movementWalls, dt);
             break;
 
         case EnemyState::Alert:
-            UpdateAlert(enemy, player, walls, alarmActive, playerHP, injuredTimer, dt);
+            UpdateAlert(enemy, player, movementWalls, sightWalls, alarmActive, playerHP, injuredTimer, dt);
             break;
 
         case EnemyState::Dead:
